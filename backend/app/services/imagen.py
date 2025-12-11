@@ -309,13 +309,25 @@ async def _generate_with_nano_banana_pro(
     
     # Get callback URL from environment
     backend_url = os.getenv("BACKEND_URL", "http://localhost:8000")
+    
+    # Ensure URL has protocol (default to https for production, http for localhost)
+    if not backend_url.startswith(("http://", "https://")):
+        # If no protocol, assume https for production URLs
+        backend_url = f"https://{backend_url}"
+    
+    # Ensure https for production URLs (Railway uses https)
+    if any(domain in backend_url.lower() for domain in [".railway.app", ".up.railway.app", ".onrender.com", ".fly.dev"]):
+        backend_url = backend_url.replace("http://", "https://")
+    
     callback_url = f"{backend_url}/api/webhooks/kie-callback"
     
     # Check if callback URL is publicly accessible (not localhost)
     # If localhost, we'll use polling instead since callbacks won't work
     use_callback = not any(host in backend_url.lower() for host in ["localhost", "127.0.0.1", "0.0.0.0"])
     
-    if not use_callback:
+    if use_callback:
+        print(f"  Using callback URL: {callback_url}")
+    else:
         print(f"  WARNING: Callback URL is localhost ({backend_url}). Callbacks won't work.")
         print(f"  Falling back to polling for task status.")
     
@@ -425,15 +437,16 @@ async def _generate_with_nano_banana_pro(
                         # Create task tracker and wait for callback
                         task_result = task_manager.create_task(task_id)
                         
-                        # Wait for callback (with shorter timeout, then fallback to polling)
-                        callback_timeout = 30  # 30 seconds to wait for callback
+                        # Wait for callback (with reasonable timeout, then fallback to polling)
+                        callback_timeout = 300  # 5 minutes - image generation can take time
                         try:
                             # Wait for callback to complete the task
+                            print(f"  Waiting up to {callback_timeout}s for callback...")
                             result_data = await task_result.wait(timeout=callback_timeout)
                             image_base64 = result_data
-                            print(f"Received callback for task {task_id}")
+                            print(f"  ✓ Received callback for task {task_id}")
                         except TimeoutError:
-                            print(f"Callback not received after {callback_timeout}s, falling back to polling...")
+                            print(f"  ⚠ Callback not received after {callback_timeout}s, falling back to polling...")
                             # Fall through to polling
                             use_callback = False  # Switch to polling mode
                     
