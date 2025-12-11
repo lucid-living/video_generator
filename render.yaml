@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: video-generator-backend
+    env: python
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PORT
+        value: 8000
+      - key: BACKEND_URL
+        sync: false  # Set this in Render dashboard after deployment
+      - key: GOOGLE_AI_API_KEY
+        sync: false
+      - key: KIE_AI_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: KLING_ACCESS_KEY
+        sync: false
+      - key: KLING_SECRET_KEY
+        sync: false
+      - key: CORS_ORIGINS
+        value: "*"  # Update with your frontend URL in production
+

@@ -1,0 +1,178 @@
+"""
+API endpoints for Phase 2: Asset Generation (Music and Images).
+"""
+
+from fastapi import APIRouter, HTTPException
+from typing import List, Dict, Any
+from pydantic import BaseModel, Field
+from app.models.workflow import AudioAsset, ReferenceImage
+from app.services.suno import generate_music
+from app.services.imagen import generate_reference_image
+from app.services.style_analyzer import analyze_style_from_images
+
+router = APIRouter(prefix="/api/assets", tags=["assets"])
+
+
+class ReferenceImageRequest(BaseModel):
+    """Request model for generating reference images."""
+    
+    style_guide: str = Field(..., description="Visual style guide text")
+    description: str = Field(..., description="Description of what to generate")
+    shot_indices: List[int] = Field(..., description="List of shot indices this image applies to")
+    previous_images: List[dict] = Field(default_factory=list, description="Previous generated images for consistency")
+    style_guide_images: List[str] = Field(default_factory=list, description="Reference images from style guide (base64)")
+    use_image_reference: bool = Field(default=False, description="Use previous image as direct reference (requires API that supports image inputs)")
+    reference_image_base64: str = Field(default="", description="Base64 encoded reference image to use for img2img generation")
+
+
+class StyleAnalysisRequest(BaseModel):
+    """Request model for analyzing style from reference images/videos."""
+    
+    images: List[str] = Field(..., description="List of base64-encoded image data URIs to analyze", min_length=1)
+
+
+@router.post("/generate-music", response_model=AudioAsset)
+async def create_music(lyrics: str, style: str | None = None) -> AudioAsset:
+    """
+    Get Suno generation URL and instructions.
+    
+    Note: Suno API is not publicly available. This endpoint returns
+    a URL to Suno's web interface where users can manually generate music.
+
+    Args:
+        lyrics: Complete lyrics text
+        style: Optional music style description
+
+    Returns:
+        AudioAsset: Audio asset with generation URL (user must manually
+                   update with actual audio URL after generating on Suno)
+
+    Raises:
+        HTTPException: If generation fails
+    """
+    try:
+        audio = await generate_music(lyrics, style)
+        return audio
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Music generation failed: {str(e)}")
+
+
+@router.post("/generate-reference-image", response_model=ReferenceImage)
+async def create_reference_image(request: ReferenceImageRequest) -> ReferenceImage:
+    """
+    Generate a reference image for visual consistency.
+
+    Args:
+        request: Reference image generation request with style_guide, description, and shot_indices
+
+    Returns:
+        ReferenceImage: Generated reference image
+
+    Raises:
+        HTTPException: If generation fails
+    """
+    try:
+        image = await generate_reference_image(
+            request.style_guide,
+            request.description,
+            request.shot_indices,
+            request.previous_images,
+            request.style_guide_images,
+            request.use_image_reference,
+            request.reference_image_base64
+        )
+        return image
+    except ValueError as e:
+        # Include the full error message for debugging
+        error_msg = str(e)
+        raise HTTPException(status_code=400, detail=error_msg)
+    except Exception as e:
+        # Include full error details for debugging
+        error_msg = f"Image generation failed: {str(e)}"
+        import traceback
+        print(f"Image generation error: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=error_msg)
+
+
+@router.post("/analyze-style", response_model=Dict[str, Any])
+async def analyze_style_guide(request: StyleAnalysisRequest) -> Dict[str, Any]:
+    """
+    Analyze reference images/videos to extract comprehensive style guide information.
+    
+    Uses OpenAI GPT-4 Vision API to analyze visual style and automatically populate
+    style guide sections based on the provided reference images.
+    
+    Args:
+        request: Style analysis request with list of base64-encoded images
+    
+    Returns:
+        Dict containing extracted style guide sections:
+        {
+            "animationStyle": str,
+            "characterDesign": str,
+            "colorPalette": str,
+            "lighting": str,
+            "cameraComposition": str,
+            "texturesMaterials": str,
+            "moodTone": str,
+            "referenceFilms": str,
+            "additionalNotes": str
+        }
+    
+    Raises:
+        HTTPException: If analysis fails
+    """
+    try:
+        print(f"Received analyze-style request with {len(request.images) if request.images else 0} image(s)")
+        
+        # Validate request
+        if not request.images:
+            print("ERROR: No images in request")
+            raise HTTPException(
+                status_code=400, 
+                detail="No images provided. Please upload at least one image."
+            )
+        
+        if len(request.images) == 0:
+            print("ERROR: Images array is empty")
+            raise HTTPException(
+                status_code=400,
+                detail="Images array is empty. Please upload at least one image."
+            )
+        
+        # Check image format
+        first_image = request.images[0]
+        if not first_image:
+            print("ERROR: First image is None or empty")
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid image data: first image is empty."
+            )
+        
+        print(f"First image length: {len(first_image)} characters")
+        print(f"First image starts with: {first_image[:50]}...")
+        
+        print(f"Analyzing {len(request.images)} image(s) for style extraction...")
+        
+        style_data = analyze_style_from_images(request.images)
+        print("Style analysis completed successfully")
+        return style_data
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
+    except ValueError as e:
+        print(f"ValueError in style analysis: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
+        print(f"Style analysis error: {error_trace}")
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Style analysis failed: {str(e)}"
+        )
+
+
+
