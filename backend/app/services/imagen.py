@@ -308,7 +308,17 @@ async def _generate_with_nano_banana_pro(
     print(f"  Resolution: 2K (for better quality)")
     
     # Get callback URL from environment
-    backend_url = os.getenv("BACKEND_URL", "http://localhost:8000")
+    # Try BACKEND_URL first, then Railway's RAILWAY_PUBLIC_DOMAIN, then default to localhost
+    backend_url = os.getenv("BACKEND_URL")
+    
+    # If BACKEND_URL not set, try Railway's public domain (automatically set by Railway)
+    if not backend_url:
+        railway_domain = os.getenv("RAILWAY_PUBLIC_DOMAIN")
+        if railway_domain:
+            backend_url = f"https://{railway_domain}"
+            print(f"  Using Railway public domain: {backend_url}")
+        else:
+            backend_url = "http://localhost:8000"
     
     # Ensure URL has protocol (default to https for production, http for localhost)
     if not backend_url.startswith(("http://", "https://")):
