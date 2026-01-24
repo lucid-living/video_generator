@@ -15,5 +15,6 @@ pytest==7.4.3
 pytest-asyncio==0.21.1
 aiofiles==23.2.1
 PyJWT==2.8.0
+supabase>=2.0.0
 
 
