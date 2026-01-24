@@ -38,14 +38,14 @@ class AudioAsset(BaseModel):
 
     Attributes:
         audio_id: Unique identifier
-        file_url: URL or path to audio file
-        duration_seconds: Duration of the audio track
+        file_url: URL or path to audio file (can be "task://{task_id}" for pending tasks)
+        duration_seconds: Duration of the audio track (0.0 for pending tasks)
         lyrics: Full lyrics used to generate the audio
     """
 
     audio_id: str = Field(..., description="Unique identifier")
-    file_url: str = Field(..., description="URL or path to audio file")
-    duration_seconds: float = Field(..., gt=0, description="Duration in seconds")
+    file_url: str = Field(..., description="URL or path to audio file (or task://{task_id} for pending)")
+    duration_seconds: float = Field(..., ge=0, description="Duration in seconds (0.0 for pending tasks)")
     lyrics: str = Field(..., description="Full lyrics text")
 
 

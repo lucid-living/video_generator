@@ -40,12 +40,39 @@ export async function generateStoryboard(
  */
 export async function generateMusic(
   lyrics: string,
-  style?: string
+  style?: string,
+  title?: string,
+  instrumental?: boolean,
+  model?: string,
+  customMode?: boolean
 ): Promise<AudioAsset> {
-  const response = await apiClient.post<AudioAsset>("/api/assets/generate-music", {
-    lyrics,
-    style,
-  });
+  // FastAPI expects query parameters for this endpoint
+  const params = new URLSearchParams();
+  params.append("lyrics", lyrics);
+  if (style) params.append("style", style);
+  if (title) params.append("title", title);
+  params.append("instrumental", String(instrumental || false));
+  params.append("model", model || "V5");
+  params.append("custom_mode", String(customMode !== undefined ? customMode : true));
+  
+  // Use GET with query params, or POST with empty body and query params
+  const response = await apiClient.post<AudioAsset>(
+    `/api/assets/generate-music?${params.toString()}`,
+    null, // Empty body
+    {
+      headers: {
+        "Content-Type": "application/json",
+      },
+    }
+  );
+  return response.data;
+}
+
+/**
+ * Get music generation task status and results.
+ */
+export async function getMusicTaskStatus(taskId: string): Promise<any> {
+  const response = await apiClient.get(`/api/assets/music-task/${taskId}`);
   return response.data;
 }
 

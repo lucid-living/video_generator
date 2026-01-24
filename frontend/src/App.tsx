@@ -9,8 +9,9 @@ import { VideoPreview } from "./components/VideoPreview";
 import { SunoMusicGenerator } from "./components/SunoMusicGenerator";
 import { ProjectSidebar } from "./components/ProjectSidebar";
 import { ReferenceImageGenerator } from "./components/ReferenceImageGenerator";
+import { Login } from "./components/Login";
 import { generateStoryboard } from "./services/api";
-import { saveWorkflow, loadWorkflow, generateWorkflowId, listWorkflows } from "./services/supabase";
+import { saveWorkflow, generateWorkflowId, listWorkflows, supabase } from "./services/supabase";
 import "./utils/debugImages"; // Load debug utility
 import type {
   Storyboard,
@@ -19,19 +20,42 @@ import type {
   AudioAsset,
   ReferenceImage,
 } from "./types/storyboard";
+import type { User } from "@supabase/supabase-js";
 
 function App() {
+  const [user, setUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true);
   const [theme, setTheme] = useState("");
   const [styleGuide, setStyleGuide] = useState("");
   const [styleGuideImages, setStyleGuideImages] = useState<string[]>([]);
   const [storyboard, setStoryboard] = useState<Storyboard | null>(null);
   const [workflow, setWorkflow] = useState<WorkflowState | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [autoSaveTimer, setAutoSaveTimer] = useState<NodeJS.Timeout | null>(null);
 
-  // Load last workflow on mount
+  // Check auth state on mount
   useEffect(() => {
+    // Check current session
+    supabase.auth.getUser().then(({ data: { user: currentUser } }) => {
+      setUser(currentUser);
+      setLoading(false);
+    });
+
+    // Listen for auth changes
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+      setLoading(false);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  // Load last workflow on mount (only if authenticated)
+  useEffect(() => {
+    if (!user) return;
     const loadLastWorkflow = async () => {
       try {
         const workflows = await listWorkflows();
@@ -142,7 +166,7 @@ function App() {
       return;
     }
 
-    setLoading(true);
+    setGenerating(true);
     setError(null);
 
     try {
@@ -170,9 +194,32 @@ function App() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to generate storyboard");
     } finally {
-      setLoading(false);
+      setGenerating(false);
     }
   };
+
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
+    setUser(null);
+    // Clear workflow state on sign out
+    setWorkflow(null);
+    setStoryboard(null);
+    setTheme("");
+    setStyleGuide("");
+  };
+
+  // Show login page if not authenticated
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="text-gray-600">Loading...</div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <Login onLoginSuccess={() => setLoading(true)} />;
+  }
 
   const handleStoryboardUpdate = async (updated: Storyboard) => {
     setStoryboard(updated);
@@ -212,6 +259,17 @@ function App() {
 
   return (
     <div className="min-h-screen bg-gray-50 flex">
+      {/* Auth Bar */}
+      <div className="fixed top-0 left-0 right-0 z-50 flex items-center justify-end gap-3 px-4 py-2 bg-white border-b border-gray-200">
+        <span className="text-sm text-gray-600 truncate max-w-[180px]">{user.email}</span>
+        <button
+          onClick={handleSignOut}
+          className="text-sm text-gray-600 hover:text-gray-900 font-medium"
+        >
+          Sign out
+        </button>
+      </div>
+
       {/* Sidebar */}
       <ProjectSidebar
         currentWorkflowId={workflow?.workflow_id || null}
@@ -220,7 +278,7 @@ function App() {
       />
 
       {/* Main Content */}
-      <div className="flex-1 ml-64">
+      <div className="flex-1 ml-64 pt-12">
         <div className="container mx-auto px-4 py-8 max-w-6xl">
           <header className="mb-8">
             <h1 className="text-3xl font-bold text-gray-900 mb-2">
@@ -268,10 +326,10 @@ function App() {
 
               <button
                 onClick={handleGenerateStoryboard}
-                disabled={loading || !theme.trim() || !styleGuide.trim()}
+                disabled={generating || !theme.trim() || !styleGuide.trim()}
                 className="px-6 py-3 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
               >
-                {loading ? "Generating..." : "Generate Storyboard"}
+                {generating ? "Generating..." : "Generate Storyboard"}
               </button>
             </div>
           </section>

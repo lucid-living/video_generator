@@ -9,6 +9,7 @@ import json
 import logging
 
 from app.services.imagen import handle_kie_callback
+from app.services.suno import convert_suno_result_to_audio_asset
 
 router = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
 
@@ -135,5 +136,120 @@ async def kie_callback_get():
     return {
         "status": "ok",
         "message": "Kie.ai webhook endpoint is active"
+    }
+
+
+class SunoCallbackPayload(BaseModel):
+    """
+    Callback payload structure from Kie.ai Suno API.
+    
+    Based on Suno API documentation, the callback includes:
+    - code: Response status code (200 = success)
+    - msg: Response message
+    - data: Nested data with callbackType, task_id, and data array
+    """
+    code: Optional[int] = None
+    msg: Optional[str] = None
+    data: Optional[Dict[str, Any]] = None
+
+
+@router.post("/suno-callback")
+async def suno_callback(request: Request, payload: Optional[SunoCallbackPayload] = None):
+    """
+    Webhook endpoint to receive music generation callbacks from Kie.ai Suno API.
+    
+    This endpoint receives POST requests from Kie.ai when music generation tasks complete.
+    The callback includes task status and result URLs for generated audio.
+    
+    Args:
+        request: FastAPI request object
+        payload: Callback payload from Kie.ai Suno API (auto-parsed from JSON body)
+    
+    Returns:
+        dict: Acknowledgment response
+    
+    Note:
+        Kie.ai will POST to this URL when a music generation task completes.
+        Callback types: "text" (text generation), "first" (first track), "complete" (all tracks)
+    """
+    try:
+        # Try to parse JSON body if payload wasn't auto-parsed
+        if payload is None:
+            try:
+                body = await request.json()
+                payload = SunoCallbackPayload(**body)
+            except Exception as e:
+                logger.error(f"Failed to parse Suno callback payload: {e}")
+                raise HTTPException(status_code=400, detail=f"Invalid callback payload: {str(e)}")
+        
+        logger.info(f"Received Suno callback: code={payload.code}, msg={payload.msg}")
+        
+        if payload.code != 200:
+            logger.warning(f"Suno callback indicates error: {payload.msg} (code: {payload.code})")
+            return {
+                "status": "error",
+                "message": payload.msg or "Generation failed",
+                "code": payload.code
+            }
+        
+        if not payload.data:
+            logger.warning("Suno callback missing data")
+            return {
+                "status": "error",
+                "message": "Missing data in callback"
+            }
+        
+        callback_type = payload.data.get("callbackType", "complete")
+        task_id = payload.data.get("task_id")
+        tracks_data = payload.data.get("data", [])
+        
+        logger.info(f"Suno callback: type={callback_type}, task_id={task_id}, tracks={len(tracks_data)}")
+        
+        # Process tracks (usually 2 variations are generated)
+        for track in tracks_data:
+            audio_id = track.get("id")
+            audio_url = track.get("audio_url")
+            duration = track.get("duration", 0.0)
+            prompt = track.get("prompt", "")
+            title = track.get("title", "")
+            
+            logger.info(f"Generated track: {title} ({audio_id}) - {audio_url}")
+            
+            # TODO: Store the audio asset in the workflow
+            # For now, we just log it. In a full implementation, you'd:
+            # 1. Look up the workflow by task_id
+            # 2. Update the workflow's audio_asset with the generated audio
+            # 3. Save the workflow back to the database
+        
+        return {
+            "status": "success",
+            "message": "Callback processed",
+            "callbackType": callback_type,
+            "task_id": task_id,
+            "tracks_count": len(tracks_data)
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error processing Suno callback: {e}", exc_info=True)
+        # Still return 200 to acknowledge receipt (don't want Kie.ai to retry)
+        return {
+            "status": "error",
+            "message": f"Error processing callback: {str(e)}"
+        }
+
+
+@router.get("/suno-callback")
+async def suno_callback_get():
+    """
+    GET endpoint for webhook verification.
+    
+    Returns:
+        dict: Verification response
+    """
+    return {
+        "status": "ok",
+        "message": "Suno webhook endpoint is active"
     }
 

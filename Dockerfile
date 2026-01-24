@@ -15,13 +15,17 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY backend/ ./backend/
 
+# Copy startup script
+COPY backend/start.sh ./backend/start.sh
+RUN chmod +x ./backend/start.sh
+
 # Set working directory to backend
 WORKDIR /app/backend
 
 # Expose port (Railway/Render will set PORT env var)
 EXPOSE 8000
 
-# Run the application
-# Use shell form to properly expand PORT environment variable
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+# Run the application using startup script
+# Use shell form to properly expand PORT environment variable in the script
+CMD ["sh", "-c", "./start.sh"]
 

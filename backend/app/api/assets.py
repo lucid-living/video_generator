@@ -2,8 +2,9 @@
 API endpoints for Phase 2: Asset Generation (Music and Images).
 """
 
-from fastapi import APIRouter, HTTPException
-from typing import List, Dict, Any
+import os
+from fastapi import APIRouter, HTTPException, Query
+from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
 from app.models.workflow import AudioAsset, ReferenceImage
 from app.services.suno import generate_music
@@ -34,31 +35,118 @@ class StyleAnalysisRequest(BaseModel):
 
 
 @router.post("/generate-music", response_model=AudioAsset)
-async def create_music(lyrics: str, style: str | None = None) -> AudioAsset:
+async def create_music(
+    lyrics: str = Query(..., description="Lyrics text"),
+    style: Optional[str] = Query(None, description="Music style"),
+    title: Optional[str] = Query(None, description="Track title"),
+    instrumental: bool = Query(False, description="Whether to generate instrumental music"),
+    model: str = Query("V5", description="Model version"),
+    custom_mode: bool = Query(True, description="Whether to use custom mode"),
+) -> AudioAsset:
     """
-    Get Suno generation URL and instructions.
+    Generate music using Kie.ai Suno API or fallback to manual generation.
     
-    Note: Suno API is not publicly available. This endpoint returns
-    a URL to Suno's web interface where users can manually generate music.
+    If KIE_AI_API_KEY is configured, uses the API for automatic generation.
+    Otherwise, returns a URL for manual generation on Suno's website.
 
     Args:
-        lyrics: Complete lyrics text
-        style: Optional music style description
+        lyrics: Lyrics text (used as prompt in custom mode, or description in non-custom mode)
+        style: Music style (required in custom mode)
+        title: Track title (required in custom mode, defaults to "Generated Track")
+        instrumental: Whether to generate instrumental music
+        model: Model version (V4, V4_5, V4_5PLUS, V4_5ALL, V5)
+        custom_mode: Whether to use custom mode (more control)
 
     Returns:
-        AudioAsset: Audio asset with generation URL (user must manually
-                   update with actual audio URL after generating on Suno)
+        AudioAsset: Audio asset with task_id (if API used) or generation URL (if manual)
 
     Raises:
         HTTPException: If generation fails
     """
     try:
+        # Try to use API if key is available
+        from app.services.suno import generate_music_via_api
+        
+        api_key = os.getenv("KIE_AI_API_KEY") or os.getenv("KIE_AI_API_key")
+        if api_key:
+            # Use API
+            if not title:
+                title = "Generated Track"
+            
+            result = await generate_music_via_api(
+                lyrics=lyrics,
+                style=style,
+                title=title,
+                instrumental=instrumental,
+                model=model,
+                custom_mode=custom_mode,
+            )
+            
+            task_id = result.get("taskId")
+            if task_id:
+                # Return AudioAsset with task_id in file_url temporarily
+                # The callback will update this with the actual audio URL
+                return AudioAsset(
+                    audio_id=f"suno_task_{task_id}",
+                    file_url=f"task://{task_id}",  # Special format to indicate it's a task
+                    duration_seconds=0.0,
+                    lyrics=lyrics,
+                )
+        
+        # Fallback to manual generation
         audio = await generate_music(lyrics, style)
         return audio
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Music generation failed: {str(e)}")
+
+
+@router.get("/music-task/{task_id}")
+async def get_music_task_status(task_id: str):
+    """
+    Get music generation task status and results.
+    
+    Args:
+        task_id: Task ID from generate_music endpoint
+        
+    Returns:
+        Dict with task status and results if complete
+        Returns status "processing" if task not found (may still be processing)
+    """
+    try:
+        from app.services.suno import get_music_details
+        result = await get_music_details(task_id)
+        
+        # If task not found (404), return processing status instead of error
+        if result.get("status") == "processing":
+            return {
+                "code": 200,
+                "msg": "Task is processing",
+                "data": result
+            }
+        
+        return {
+            "code": 200,
+            "msg": "success",
+            "data": result
+        }
+    except Exception as e:
+        # Log the error but return a more user-friendly response
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Error getting task status for {task_id}: {str(e)}")
+        
+        # Return processing status instead of error - callback will handle completion
+        return {
+            "code": 200,
+            "msg": "Task status unavailable - may still be processing",
+            "data": {
+                "status": "processing",
+                "task_id": task_id,
+                "message": "Waiting for callback. Task may still be processing."
+            }
+        }
 
 
 @router.post("/generate-reference-image", response_model=ReferenceImage)

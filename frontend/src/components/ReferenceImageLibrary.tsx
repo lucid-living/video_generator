@@ -10,9 +10,7 @@
  */
 
 import { useState, useEffect, useCallback } from "react";
-import { supabase } from "../services/supabase";
 import { analyzeStyleFromImages } from "../services/api";
-import type { ReferenceImage } from "../types/storyboard";
 
 interface ReferenceImageLibraryProps {
   onSelectImages: (images: string[]) => void; // Callback with selected image base64/URLs
@@ -31,7 +29,6 @@ export function ReferenceImageLibrary({
 }: ReferenceImageLibraryProps) {
   const [uploadedImages, setUploadedImages] = useState<Array<{ id: string; data: string; name: string }>>([]);
   const [favoritedImages, setFavoritedImages] = useState<Array<{ id: string; data: string; description: string }>>([]);
-  const [loading, setLoading] = useState(false);
   const [extractingStyle, setExtractingStyle] = useState(false);
   const [activeTab, setActiveTab] = useState<"upload" | "favorites" | "library">("upload");
 
@@ -42,7 +39,6 @@ export function ReferenceImageLibrary({
 
   const loadFavoritedImages = async () => {
     try {
-      setLoading(true);
       // Fetch favorited images from API (which gets image data from workflows)
       const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
       const response = await fetch(`${API_BASE_URL}/api/learning/favorited-images?limit=50`);
@@ -64,8 +60,6 @@ export function ReferenceImageLibrary({
     } catch (error) {
       console.error("Failed to load favorited images:", error);
       // Don't show error to user - just disable favorites tab
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -142,10 +136,6 @@ export function ReferenceImageLibrary({
     }
   };
 
-  const allImages = [
-    ...uploadedImages.map((img) => ({ id: img.id, data: img.data, source: "upload" as const })),
-    ...favoritedImages.map((img) => ({ id: img.id, data: img.data, source: "favorite" as const })),
-  ];
 
   return (
     <div className="space-y-4 border border-gray-200 rounded-lg p-4 bg-white">

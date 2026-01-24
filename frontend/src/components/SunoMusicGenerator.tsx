@@ -1,10 +1,10 @@
 /**
- * Component for generating music with Suno.
- * Since Suno API is not publicly available, this component provides
- * a link to Suno's web interface with pre-filled lyrics.
+ * Component for generating music with Kie.ai Suno API.
+ * Supports both API-based generation and manual fallback.
  */
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
+import { generateMusic, getMusicTaskStatus } from "../services/api";
 import type { AudioAsset } from "../types/storyboard";
 
 interface SunoMusicGeneratorProps {
@@ -23,6 +23,11 @@ export function SunoMusicGenerator({
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [audioPreviewUrl, setAudioPreviewUrl] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [generationStatus, setGenerationStatus] = useState<string>("");
+  const [taskId, setTaskId] = useState<string | null>(null);
+  const [useApi, setUseApi] = useState(true); // Toggle between API and manual
+  const pollCountRef = useRef<number>(0); // Use ref to persist poll count across renders
 
   // Generate Suno URL with lyrics
   const getSunoUrl = () => {
@@ -32,9 +37,118 @@ export function SunoMusicGenerator({
     return baseUrl;
   };
 
+  // Poll for task status if we have a task ID
+  useEffect(() => {
+    if (!taskId || !useApi) {
+      pollCountRef.current = 0; // Reset when taskId is cleared
+      return;
+    }
+    
+    // Reset poll count when new task starts
+    pollCountRef.current = 0;
+    const maxPolls = 60; // Stop polling after 5 minutes (60 * 5 seconds)
+    
+    const pollInterval = setInterval(async () => {
+      pollCountRef.current++;
+      const currentCount = pollCountRef.current;
+      
+      // Stop polling after max attempts
+      if (currentCount > maxPolls) {
+        clearInterval(pollInterval);
+        setGenerationStatus("Generation taking longer than expected. The callback will update when ready.");
+        setIsGenerating(false);
+        return;
+      }
+      
+      try {
+        const status = await getMusicTaskStatus(taskId);
+        const statusMsg = status.msg || status.message || "Checking status...";
+        setGenerationStatus(`${statusMsg} (${currentCount}/${maxPolls})`);
+        
+        // Check if we have completed tracks
+        const data = status.data;
+        if (data) {
+          // If data is an array with tracks
+          if (Array.isArray(data) && data.length > 0) {
+            const firstTrack = data[0];
+            if (firstTrack.audio_url) {
+              const audioAsset: AudioAsset = {
+                audio_id: firstTrack.id || taskId,
+                file_url: firstTrack.audio_url,
+                duration_seconds: firstTrack.duration || 0,
+                lyrics: lyrics,
+              };
+              onMusicGenerated?.(audioAsset);
+              setIsGenerating(false);
+              setGenerationStatus("Generation complete!");
+              clearInterval(pollInterval);
+              pollCountRef.current = 0; // Reset for next time
+              return;
+            }
+          }
+          
+          // If data has a status field indicating processing
+          if (data.status === "processing" || data.message) {
+            // Still processing, continue polling
+            return;
+          }
+        }
+      } catch (error) {
+        // Don't log errors for processing tasks - it's expected
+        // Only update status periodically
+        if (currentCount % 6 === 0) { // Update status every 30 seconds
+          setGenerationStatus(`Waiting for generation... (${currentCount}/${maxPolls})`);
+        }
+      }
+    }, 5000); // Poll every 5 seconds
+    
+    return () => {
+      clearInterval(pollInterval);
+      // Don't reset pollCountRef here - let it persist if taskId changes
+    };
+  }, [taskId, useApi, lyrics, onMusicGenerated]);
+
   const handleOpenSuno = () => {
     const url = getSunoUrl();
     window.open(url, "_blank", "noopener,noreferrer");
+  };
+
+  const handleGenerateWithApi = async () => {
+    if (!lyrics.trim()) {
+      alert("Please provide lyrics to generate music");
+      return;
+    }
+
+    setIsGenerating(true);
+    setGenerationStatus("Starting generation...");
+    setTaskId(null);
+
+    try {
+      const audioAsset = await generateMusic(
+        lyrics,
+        style,
+        "Generated Track", // Default title
+        false, // Not instrumental
+        "V5", // Use V5 model
+        false // Use non-custom mode for simplicity
+      );
+
+      // Check if we got a task ID (API mode)
+      if (audioAsset.file_url?.startsWith("task://")) {
+        const extractedTaskId = audioAsset.file_url.replace("task://", "");
+        setTaskId(extractedTaskId);
+        setGenerationStatus("Generation started! Waiting for completion...");
+      } else {
+        // Manual mode - user needs to upload/enter URL
+        setGenerationStatus("API not available. Please use manual upload below.");
+        setIsGenerating(false);
+      }
+    } catch (error) {
+      console.error("Failed to generate music:", error);
+      alert(`Failed to generate music: ${error instanceof Error ? error.message : "Unknown error"}`);
+      setIsGenerating(false);
+      setGenerationStatus("");
+    }
   };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -120,10 +234,27 @@ export function SunoMusicGenerator({
     <div className="space-y-4 p-4 bg-white rounded-lg border border-gray-200">
       <div>
         <h3 className="text-lg font-semibold mb-2">Generate Music with Suno</h3>
-        <p className="text-sm text-gray-600 mb-4">
-          Suno API is not publicly available. Generate your music on Suno's website,
-          then paste the audio URL here.
-        </p>
+        <div className="flex items-center gap-2 mb-4">
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={useApi}
+              onChange={(e) => setUseApi(e.target.checked)}
+              className="rounded"
+            />
+            <span>Use Kie.ai API (automatic generation)</span>
+          </label>
+        </div>
+        {useApi && (
+          <p className="text-sm text-gray-600 mb-4">
+            Using Kie.ai Suno API for automatic music generation. Music will be generated in the background.
+          </p>
+        )}
+        {!useApi && (
+          <p className="text-sm text-gray-600 mb-4">
+            Manual mode: Generate your music on Suno's website, then paste the audio URL here.
+          </p>
+        )}
       </div>
 
       <div className="space-y-3">
@@ -141,15 +272,37 @@ export function SunoMusicGenerator({
           </button>
         </div>
 
-        {/* Open Suno Button */}
-        <button
-          onClick={handleOpenSuno}
-          className="w-full px-4 py-3 bg-purple-600 text-white rounded-md hover:bg-purple-700 transition-colors"
-        >
-          🎵 Open Suno to Generate Music
-        </button>
+        {/* API Generation Button */}
+        {useApi && (
+          <>
+            <button
+              onClick={handleGenerateWithApi}
+              disabled={isGenerating || !lyrics.trim()}
+              className="w-full px-4 py-3 bg-purple-600 text-white rounded-md hover:bg-purple-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
+            >
+              {isGenerating ? "⏳ Generating..." : "🎵 Generate Music with API"}
+            </button>
+            {generationStatus && (
+              <div className="p-3 bg-blue-50 border border-blue-200 rounded-md text-sm text-blue-800">
+                {generationStatus}
+              </div>
+            )}
+            <div className="text-sm text-gray-500 text-center">or</div>
+          </>
+        )}
 
-        <div className="text-sm text-gray-500 text-center">or</div>
+        {/* Manual Mode: Open Suno Button */}
+        {!useApi && (
+          <>
+            <button
+              onClick={handleOpenSuno}
+              className="w-full px-4 py-3 bg-purple-600 text-white rounded-md hover:bg-purple-700 transition-colors"
+            >
+              🎵 Open Suno to Generate Music
+            </button>
+            <div className="text-sm text-gray-500 text-center">or</div>
+          </>
+        )}
 
         {/* File Upload Option */}
         <div className="space-y-2">
