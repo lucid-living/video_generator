@@ -39,18 +39,42 @@ video_generator/
   - Kling or Hailuo - for video generation
   - Suno account (for web interface, no API key needed)
 
-### Supabase Storage Setup
+### Google Drive Setup
 
-The app uses Supabase Storage to save approved reference images. You need to create a storage bucket:
+The app uses Google Drive to store reference images, organized by project/workflow. Setup:
 
-1. Go to your Supabase project dashboard
-2. Navigate to **Storage** → **Buckets**
-3. Click **New bucket**
-4. Name: `reference-images`
-5. Set as **Public bucket** (so images can be accessed via public URLs)
-6. Click **Create bucket**
+1. **Create Google Cloud Project**:
+   - Go to [Google Cloud Console](https://console.cloud.google.com/)
+   - Create a new project or select an existing one
 
-This bucket will store approved reference images that can be saved to style guides for future use.
+2. **Enable Google Drive API**:
+   - Navigate to **APIs & Services** → **Library**
+   - Search for "Google Drive API"
+   - Click **Enable**
+
+3. **Create OAuth 2.0 Credentials**:
+   - Go to **APIs & Services** → **Credentials**
+   - Click **Create Credentials** → **OAuth client ID**
+   - Application type: **Desktop app**
+   - Name it (e.g., "AI Music Video Generator")
+   - Click **Create**
+   - Download the credentials JSON file
+
+4. **Place Credentials File**:
+   - Rename the downloaded file to `credentials.json`
+   - Place it in the `backend/` directory
+   - Add `credentials.json` and `token.json` to `.gitignore` (token.json is auto-generated)
+
+5. **First Run Authentication**:
+   - When you first run the backend, it will open a browser window
+   - Sign in with your Google account
+   - Grant permissions to access Google Drive
+   - A `token.json` file will be created automatically
+
+**Note**: Images are organized in Google Drive as:
+- Main folder: `AI Music Video Generator Projects`
+- Subfolder per workflow: `Workflow_{workflow_id}/`
+- Each image is stored as: `{image_id}.png`
 
 ### Backend Setup
 
@@ -79,6 +103,7 @@ npm install
 # VITE_SUPABASE_URL=https://your-project.supabase.co
 # VITE_SUPABASE_ANON_KEY=your-anon-key
 # VITE_API_URL=http://localhost:8000
+# VITE_CONTENT_MACHINE_API_URL=http://localhost:8001  # Optional: for Content Machine integration
 npm run dev
 ```
 

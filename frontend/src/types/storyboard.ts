@@ -29,6 +29,8 @@ export interface ReferenceImage {
   description: string;
   shot_indices: number[];
   approved?: boolean; // Whether user has approved this image
+  favorited?: boolean; // Whether user favorited this image (beyond approval)
+  rating?: number; // Optional 1-5 star rating
   storage_url?: string; // URL if saved to Supabase storage
   saved_to_style_guide?: boolean; // Whether saved to style guide
 }

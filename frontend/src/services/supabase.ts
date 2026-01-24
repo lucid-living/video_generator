@@ -21,16 +21,59 @@ export const supabase = createClient(supabaseUrl || "", supabaseAnonKey || "");
 
 /**
  * Save workflow state to Supabase.
+ * 
+ * Note: Strips base64_data from reference_images to prevent database timeouts.
+ * Only storage_url is saved to the database. base64_data should be loaded
+ * from storage when needed for display.
  */
 export async function saveWorkflow(workflow: WorkflowState): Promise<void> {
   try {
+    // Strip base64_data from reference_images before saving to prevent database timeouts
+    // Large base64 strings can cause PostgreSQL statement timeouts (error 57014)
+    const referenceImagesForDatabase = workflow.reference_images.map((img) => {
+      // CRITICAL: Never save images without both storage_url AND base64_data
+      // If we have a storage_url, we can safely remove base64_data
+      if (img.storage_url) {
+        return {
+          ...img,
+          base64_data: "", // Remove base64_data when storage_url exists
+        };
+      } else {
+        // If no storage_url, we MUST keep base64_data or the image will be lost
+        if (!img.base64_data || img.base64_data.length < 100) {
+          console.error(
+            `CRITICAL: Image ${img.image_id} has no storage_url and no valid base64_data. ` +
+            `This image cannot be displayed. Skipping save for this image.`
+          );
+          // Return null to filter out - we can't save images we can't display
+          return null;
+        }
+        
+        // If base64_data is very large (>500KB), warn but still save it
+        // Better to have slow saves than lost images
+        if (img.base64_data.length > 500000) {
+          console.warn(
+            `Image ${img.image_id} has no storage_url and very large base64_data (${Math.round(img.base64_data.length / 1000)}KB). ` +
+            `This may cause database timeouts. Consider uploading to storage first.`
+          );
+        }
+        
+        // Keep base64_data - it's the only way to display this image
+        return img;
+      }
+    }).filter((img): img is NonNullable<typeof img> => img !== null); // Remove null entries
+
+    // Log the size of data being saved for debugging
+    const dataSize = JSON.stringify(referenceImagesForDatabase).length;
+    console.log(`Saving workflow ${workflow.workflow_id} with ${referenceImagesForDatabase.length} images (${dataSize} bytes)`);
+
     const { error } = await supabase
       .from("video_workflows")
       .upsert(
         {
           workflow_id: workflow.workflow_id,
           storyboard: workflow.storyboard,
-          reference_images: workflow.reference_images,
+          reference_images: referenceImagesForDatabase,
           video_clips: workflow.video_clips,
           audio_asset: workflow.audio_asset,
           final_video_url: workflow.final_video_url,
@@ -42,11 +85,33 @@ export async function saveWorkflow(workflow: WorkflowState): Promise<void> {
       );
 
     if (error) {
-      throw error;
+      // Provide more detailed error information
+      const errorMessage = error.message || "Unknown error";
+      const errorCode = error.code || "UNKNOWN";
+      console.error("Supabase error saving workflow:", {
+        code: errorCode,
+        message: errorMessage,
+        details: error.details,
+        hint: error.hint,
+      });
+      
+      // Create a more user-friendly error message
+      if (errorCode === "57014") {
+        throw new Error("Database timeout: The workflow is too large. Please ensure all images are uploaded to storage.");
+      } else if (errorCode === "PGRST204") {
+        throw new Error("No rows returned: The workflow may not exist.");
+      } else {
+        throw new Error(`Failed to save workflow: ${errorMessage} (${errorCode})`);
+      }
     }
   } catch (error) {
     console.error("Error saving workflow:", error);
-    throw error;
+    // Re-throw with better error message if it's not already an Error object
+    if (error instanceof Error) {
+      throw error;
+    } else {
+      throw new Error(`Failed to save workflow: ${error instanceof Error ? error.message : "Unknown error"}`);
+    }
   }
 }
 

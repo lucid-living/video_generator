@@ -11,6 +11,7 @@ import { ProjectSidebar } from "./components/ProjectSidebar";
 import { ReferenceImageGenerator } from "./components/ReferenceImageGenerator";
 import { generateStoryboard } from "./services/api";
 import { saveWorkflow, loadWorkflow, generateWorkflowId, listWorkflows } from "./services/supabase";
+import "./utils/debugImages"; // Load debug utility
 import type {
   Storyboard,
   WorkflowState,

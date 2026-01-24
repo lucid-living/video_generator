@@ -26,6 +26,8 @@ class ReferenceImage(BaseModel):
     description: str = Field(..., description="Description of the image")
     shot_indices: List[int] = Field(default_factory=list, description="Applicable shot indices")
     approved: bool | None = Field(None, description="Whether user approved this image")
+    favorited: bool | None = Field(None, description="Whether user favorited this image (beyond approval)")
+    rating: int | None = Field(None, ge=1, le=5, description="Optional 1-5 star rating")
     storage_url: str | None = Field(None, description="URL if saved to storage")
     saved_to_style_guide: bool | None = Field(None, description="Whether saved to style guide")
 

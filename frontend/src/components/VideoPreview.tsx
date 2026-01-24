@@ -29,7 +29,7 @@ export function VideoPreview({ workflow }: VideoPreviewProps) {
             {workflow.reference_images.map((img) => (
               <div key={img.image_id} className="border rounded-lg overflow-hidden">
                 <img
-                  src={img.base64_data}
+                  src={img.storage_url || img.base64_data || ""}
                   alt={img.description}
                   className="w-full h-auto"
                 />

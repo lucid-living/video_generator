@@ -9,6 +9,7 @@ from app.models.workflow import AudioAsset, ReferenceImage
 from app.services.suno import generate_music
 from app.services.imagen import generate_reference_image
 from app.services.style_analyzer import analyze_style_from_images
+from app.services.google_drive import upload_image_to_drive, delete_image_from_drive
 
 router = APIRouter(prefix="/api/assets", tags=["assets"])
 
@@ -22,7 +23,8 @@ class ReferenceImageRequest(BaseModel):
     previous_images: List[dict] = Field(default_factory=list, description="Previous generated images for consistency")
     style_guide_images: List[str] = Field(default_factory=list, description="Reference images from style guide (base64)")
     use_image_reference: bool = Field(default=False, description="Use previous image as direct reference (requires API that supports image inputs)")
-    reference_image_base64: str = Field(default="", description="Base64 encoded reference image to use for img2img generation")
+    reference_image_base64: str = Field(default="", description="Base64 encoded reference image to use for img2img generation (deprecated, use reference_images_base64)")
+    reference_images_base64: List[str] = Field(default_factory=list, description="List of base64 encoded reference images to use for img2img generation (up to 14 for Gemini API)", max_length=14)
 
 
 class StyleAnalysisRequest(BaseModel):
@@ -74,25 +76,38 @@ async def create_reference_image(request: ReferenceImageRequest) -> ReferenceIma
         HTTPException: If generation fails
     """
     try:
+        # Support both old single image format and new multiple images format
+        reference_images = request.reference_images_base64
+        if not reference_images and request.reference_image_base64:
+            # Backward compatibility: convert single image to list
+            reference_images = [request.reference_image_base64]
+        
+        # Use image reference if any reference images are provided
+        use_image_reference = request.use_image_reference or len(reference_images) > 0
+        
         image = await generate_reference_image(
             request.style_guide,
             request.description,
             request.shot_indices,
             request.previous_images,
             request.style_guide_images,
-            request.use_image_reference,
-            request.reference_image_base64
+            use_image_reference,
+            reference_images
         )
         return image
     except ValueError as e:
         # Include the full error message for debugging
         error_msg = str(e)
+        import traceback
+        print(f"ValueError in generate-reference-image: {error_msg}")
+        print(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=400, detail=error_msg)
     except Exception as e:
         # Include full error details for debugging
         error_msg = f"Image generation failed: {str(e)}"
         import traceback
-        print(f"Image generation error: {traceback.format_exc()}")
+        print(f"Exception in generate-reference-image: {error_msg}")
+        print(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=error_msg)
 
 
@@ -173,6 +188,72 @@ async def analyze_style_guide(request: StyleAnalysisRequest) -> Dict[str, Any]:
             status_code=500, 
             detail=f"Style analysis failed: {str(e)}"
         )
+
+
+class GoogleDriveUploadRequest(BaseModel):
+    """Request model for uploading images to Google Drive."""
+    
+    image_data_base64: str = Field(..., description="Base64 encoded image data (data URI format)")
+    image_id: str = Field(..., description="Unique identifier for the image")
+    workflow_id: str = Field(..., description="Workflow/project identifier")
+    description: str = Field(..., description="Description of the image")
+
+
+class GoogleDriveDeleteRequest(BaseModel):
+    """Request model for deleting images from Google Drive."""
+    
+    file_url: str = Field(..., description="Google Drive file URL or file ID")
+
+
+@router.post("/upload-to-drive")
+async def upload_image_to_google_drive(request: GoogleDriveUploadRequest) -> dict:
+    """
+    Upload an image to Google Drive in the workflow's folder.
+    
+    Args:
+        request: Upload request with image data, image_id, workflow_id, and description
+        
+    Returns:
+        dict: {"url": str} - Public shareable URL of the uploaded image
+        
+    Raises:
+        HTTPException: If upload fails
+    """
+    try:
+        url = await upload_image_to_drive(
+            request.image_data_base64,
+            request.image_id,
+            request.workflow_id,
+            request.description
+        )
+        return {"url": url}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Google Drive upload failed: {str(e)}")
+
+
+@router.delete("/delete-from-drive")
+async def delete_image_from_google_drive(request: GoogleDriveDeleteRequest) -> dict:
+    """
+    Delete an image from Google Drive.
+    
+    Args:
+        request: Delete request with file URL or file ID
+        
+    Returns:
+        dict: {"success": bool} - Success status
+        
+    Raises:
+        HTTPException: If deletion fails
+    """
+    try:
+        await delete_image_from_drive(request.file_url)
+        return {"success": True}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Google Drive deletion failed: {str(e)}")
 
 
 

@@ -11,9 +11,22 @@ import {
   type StyleGuideTemplate 
 } from "../services/styleGuideStorage";
 import { analyzeStyleFromImages } from "../services/api";
+import { fetchChannels, isContentMachineAvailable, type Channel } from "../services/contentMachineApi";
 import type { ReferenceImage } from "../types/storyboard";
 
 export interface StyleGuideData {
+  // Channel & Brand Information
+  channelName: string;
+  channelDescription: string;
+  targetAudience: string;
+  contentType: string;
+  brandValues: string;
+  brandMessaging: string;
+  brandTone: string;
+  contentStrategy: string;
+  viewerPreferences: string;
+  
+  // Visual Style (existing)
   animationStyle: string;
   characterDesign: string;
   colorPalette: string;
@@ -53,8 +66,26 @@ export function StyleGuideBuilder({
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const loadDropdownRef = useRef<HTMLDivElement>(null);
   
+  // Content Machine integration
+  const [channels, setChannels] = useState<Channel[]>([]);
+  const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null);
+  const [loadingChannels, setLoadingChannels] = useState(false);
+  const [contentMachineAvailable, setContentMachineAvailable] = useState(false);
+  
   // Detailed style guide sections
   const [styleData, setStyleData] = useState<StyleGuideData>({
+    // Channel & Brand Information
+    channelName: "",
+    channelDescription: "",
+    targetAudience: "",
+    contentType: "",
+    brandValues: "",
+    brandMessaging: "",
+    brandTone: "",
+    contentStrategy: "",
+    viewerPreferences: "",
+    
+    // Visual Style
     animationStyle: "",
     characterDesign: "",
     colorPalette: "",
@@ -70,6 +101,30 @@ export function StyleGuideBuilder({
   // Load templates on mount and when dropdown opens
   useEffect(() => {
     loadTemplates();
+  }, []);
+
+  // Check Content Machine availability and load channels
+  useEffect(() => {
+    const checkAndLoadChannels = async () => {
+      const available = isContentMachineAvailable();
+      setContentMachineAvailable(available);
+      
+      if (available) {
+        setLoadingChannels(true);
+        try {
+          const loadedChannels = await fetchChannels();
+          setChannels(loadedChannels);
+        } catch (error) {
+          console.error("Failed to load channels from Content Machine:", error);
+          // Don't show error to user - just disable the feature
+          setContentMachineAvailable(false);
+        } finally {
+          setLoadingChannels(false);
+        }
+      }
+    };
+    
+    checkAndLoadChannels();
   }, []);
 
   // Reload templates when dropdown opens
@@ -114,13 +169,42 @@ export function StyleGuideBuilder({
     try {
       const template = await loadStyleGuideTemplate(templateId);
       if (template) {
-        setStyleData(template.style_guide_data);
+        // Merge with default values to ensure backward compatibility with old templates
+        const defaultData: StyleGuideData = {
+          // Channel & Brand (defaults for old templates)
+          channelName: "",
+          channelDescription: "",
+          targetAudience: "",
+          contentType: "",
+          brandValues: "",
+          brandMessaging: "",
+          brandTone: "",
+          contentStrategy: "",
+          viewerPreferences: "",
+          // Visual Style (defaults for old templates)
+          animationStyle: "",
+          characterDesign: "",
+          colorPalette: "",
+          lighting: "",
+          cameraComposition: "",
+          texturesMaterials: "",
+          moodTone: "",
+          referenceImages: [],
+          referenceFilms: "",
+          additionalNotes: "",
+        };
+        // Merge: defaults first, then loaded data (loaded data overrides defaults)
+        const loadedData: StyleGuideData = {
+          ...defaultData,
+          ...template.style_guide_data,
+        };
+        setStyleData(loadedData);
         setSelectedTemplateId(templateId);
         setTemplateName(template.name);
-        const compiled = compileStyleGuide(template.style_guide_data);
+        const compiled = compileStyleGuide(loadedData);
         onChange(compiled);
         setSimpleGuide(compiled); // Update simple guide text as well
-        onDetailedChange?.(template.style_guide_data);
+        onDetailedChange?.(loadedData);
         // Switch to detailed mode to show all the loaded sections
         setActiveTab("detailed");
       }
@@ -254,47 +338,73 @@ export function StyleGuideBuilder({
   const compileStyleGuide = useCallback((data: StyleGuideData): string => {
     const sections: string[] = [];
 
-    // Animation Style
+    // Channel & Brand Information (add first for context)
+    const brandSections: string[] = [];
+    if (data.channelName) {
+      brandSections.push(`CHANNEL: ${data.channelName}`);
+    }
+    if (data.channelDescription) {
+      brandSections.push(`CHANNEL DESCRIPTION:\n${data.channelDescription}`);
+    }
+    if (data.targetAudience) {
+      brandSections.push(`TARGET AUDIENCE:\n${data.targetAudience}`);
+    }
+    if (data.contentType) {
+      brandSections.push(`CONTENT TYPE: ${data.contentType}`);
+    }
+    if (data.brandValues) {
+      brandSections.push(`BRAND VALUES:\n${data.brandValues}`);
+    }
+    if (data.brandMessaging) {
+      brandSections.push(`BRAND MESSAGING:\n${data.brandMessaging}`);
+    }
+    if (data.brandTone) {
+      brandSections.push(`BRAND TONE:\n${data.brandTone}`);
+    }
+    if (data.contentStrategy) {
+      brandSections.push(`CONTENT STRATEGY:\n${data.contentStrategy}`);
+    }
+    if (data.viewerPreferences) {
+      brandSections.push(`VIEWER PREFERENCES:\n${data.viewerPreferences}`);
+    }
+    
+    if (brandSections.length > 0) {
+      sections.push(`BRAND & CHANNEL IDENTITY:\n${brandSections.join("\n\n")}`);
+    }
+
+    // Visual Style
     if (data.animationStyle) {
       sections.push(`ANIMATION STYLE:\n${data.animationStyle}`);
     }
 
-    // Character Design
     if (data.characterDesign) {
       sections.push(`CHARACTER DESIGN:\n${data.characterDesign}`);
     }
 
-    // Color Palette
     if (data.colorPalette) {
       sections.push(`COLOR PALETTE:\n${data.colorPalette}`);
     }
 
-    // Lighting
     if (data.lighting) {
       sections.push(`LIGHTING:\n${data.lighting}`);
     }
 
-    // Camera & Composition
     if (data.cameraComposition) {
       sections.push(`CAMERA & COMPOSITION:\n${data.cameraComposition}`);
     }
 
-    // Textures & Materials
     if (data.texturesMaterials) {
       sections.push(`TEXTURES & MATERIALS:\n${data.texturesMaterials}`);
     }
 
-    // Mood & Tone
     if (data.moodTone) {
       sections.push(`MOOD & TONE:\n${data.moodTone}`);
     }
 
-    // Reference Films
     if (data.referenceFilms) {
       sections.push(`REFERENCE FILMS: ${data.referenceFilms}`);
     }
 
-    // Additional Notes
     if (data.additionalNotes) {
       sections.push(`ADDITIONAL NOTES:\n${data.additionalNotes}`);
     }
@@ -322,6 +432,63 @@ export function StyleGuideBuilder({
     setShowLoadDropdown(false);
   };
 
+  const handleChannelSelect = (channelId: string) => {
+    const channel = channels.find(c => c.id === channelId);
+    if (!channel) return;
+
+    setSelectedChannelId(channelId);
+    
+    // Auto-populate brand fields from channel
+    const updatedData: StyleGuideData = {
+      ...styleData,
+      channelName: channel.name || styleData.channelName,
+      contentType: channel.channel_type || styleData.contentType,
+      // Channel link can be used as additional context
+      channelDescription: styleData.channelDescription || 
+        (channel.channel_link ? `Channel: ${channel.name}\nLink: ${channel.channel_link}` : styleData.channelDescription),
+    };
+    
+    setStyleData(updatedData);
+    
+    // Compile and update
+    const compiled = compileStyleGuide(updatedData);
+    onChange(compiled);
+    onDetailedChange?.(updatedData);
+  };
+
+  const handleLoadPixarLullabyPreset = () => {
+    const presetData: StyleGuideData = {
+      // Channel & Brand Information
+      channelName: styleData.channelName || "Lullaby Channel",
+      channelDescription: styleData.channelDescription || "Animated lullaby videos for children",
+      targetAudience: "Children under 2 (helping them sleep better) and children under 5 (teaching Christian values)",
+      contentType: "Animated lullaby music videos with storytelling",
+      brandValues: "Love, kindness, faith, peace, comfort, Christian values",
+      brandMessaging: "Creating peaceful, educational content that helps children sleep while teaching positive Christian values",
+      brandTone: "Calming, gentle, warm, nurturing, peaceful, educational",
+      contentStrategy: "3 videos per week - consistent Pixar-style animation with recurring characters and themes",
+      viewerPreferences: "Parents seeking quality bedtime content that combines sleep aid with positive values education",
+      
+      // Visual Style - Pixar for Children's Lullabies
+      animationStyle: "Pixar-style 3D animation - smooth, polished, high-quality 3D animated style matching Pixar Animation Studios (Inside Out, Soul, Coco, Up, Toy Story). Calming, gentle movements perfect for lullabies. Soft transitions, no sudden movements.",
+      characterDesign: "Pixar-style characters with friendly, expressive faces. Rounded, approachable forms. Consistent character designs across all videos. Characters should be warm, inviting, and non-threatening. Age-appropriate for children 0-5.",
+      colorPalette: "Soft, calming colors: gentle blues, warm purples, soft pastels, warm whites. Avoid bright, stimulating colors. Use colors that promote relaxation and sleep. Warm, inviting tones with good contrast for visibility.",
+      lighting: "Soft, diffused lighting. Warm, gentle light sources. Soft shadows with ambient occlusion. Avoid harsh shadows or dramatic lighting. Create a peaceful, dreamy atmosphere suitable for bedtime.",
+      cameraComposition: "Gentle camera movements. Soft focus. Wide, peaceful shots for lullabies. Close-ups for emotional moments. Rule of thirds. Avoid jarring camera movements or quick cuts.",
+      texturesMaterials: "Clean, polished 3D surfaces with subtle subsurface scattering (skin glow). Smooth, rounded forms. NO photorealistic textures - everything must look like high-quality 3D animation.",
+      moodTone: "Calming, peaceful, soothing, warm, nurturing. Perfect for bedtime. Gentle and educational. Positive and uplifting while remaining peaceful.",
+      referenceImages: styleData.referenceImages, // Keep existing images
+      referenceFilms: "Pixar: Inside Out, Soul, Coco, Up, Toy Story, Monsters Inc. DreamWorks: How to Train Your Dragon (calming scenes).",
+      additionalNotes: "CRITICAL: All content must be age-appropriate for children under 5. For lullabies (ages 0-2): focus on sleep-inducing visuals (stars, moons, clouds, peaceful landscapes). For educational content (ages 2-5): integrate Christian values naturally (kindness, love, helping others, biblical stories). Maintain character consistency across all videos. Use your favorited images as references for best results.",
+    };
+    
+    setStyleData(presetData);
+    const compiled = compileStyleGuide(presetData);
+    onChange(compiled);
+    onDetailedChange?.(presetData);
+    setActiveTab("detailed"); // Switch to detailed view to show all sections
+  };
+
   return (
     <div className="style-guide-builder space-y-4">
       <div className="flex items-center justify-between mb-4">
@@ -329,6 +496,13 @@ export function StyleGuideBuilder({
           Style Guide
         </label>
         <div className="flex gap-2 items-center">
+          <button
+            onClick={handleLoadPixarLullabyPreset}
+            className="px-3 py-1 text-sm rounded-md bg-purple-600 text-white hover:bg-purple-700 flex items-center gap-1"
+            title="Load Pixar Lullaby preset - optimized for children's animated lullabies with Christian values"
+          >
+            <span>🎬 Pixar Lullaby</span>
+          </button>
           <div className="relative" ref={loadDropdownRef}>
             <button
               onClick={() => setShowLoadDropdown(!showLoadDropdown)}
@@ -424,6 +598,184 @@ export function StyleGuideBuilder({
         </div>
       ) : (
         <div className="space-y-6 border border-gray-200 rounded-lg p-6 bg-white">
+          {/* Brand & Channel Identity Section */}
+          <div className="border-b border-gray-300 pb-6 mb-6">
+            <h3 className="text-lg font-bold mb-4 text-gray-900">🎯 Brand & Channel Identity</h3>
+            <p className="text-sm text-gray-600 mb-4">
+              Define your channel's brand identity and content strategy to ensure consistent visual style across all generated content.
+            </p>
+            
+            {/* Content Machine Integration */}
+            {contentMachineAvailable && (
+              <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-md">
+                <div className="flex items-center justify-between mb-2">
+                  <label className="block text-sm font-semibold text-gray-900">
+                    📺 Load from Content Machine
+                  </label>
+                  {loadingChannels && (
+                    <span className="text-xs text-gray-500">Loading channels...</span>
+                  )}
+                </div>
+                {channels.length > 0 ? (
+                  <select
+                    value={selectedChannelId || ""}
+                    onChange={(e) => {
+                      if (e.target.value) {
+                        handleChannelSelect(e.target.value);
+                      } else {
+                        setSelectedChannelId(null);
+                      }
+                    }}
+                    className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white text-gray-900"
+                  >
+                    <option value="">-- Select a channel to auto-fill --</option>
+                    {channels.map((channel) => (
+                      <option key={channel.id} value={channel.id}>
+                        {channel.name} {channel.channel_type ? `(${channel.channel_type})` : ""}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <p className="text-sm text-gray-600">
+                    No channels found in Content Machine. Create channels there first, or fill in manually below.
+                  </p>
+                )}
+                <p className="mt-2 text-xs text-gray-500">
+                  Select a channel from Content Machine to automatically populate channel name and type.
+                </p>
+              </div>
+            )}
+            
+            <div className="space-y-4">
+              {/* Channel Name */}
+              <div>
+                <label className="block text-sm font-semibold mb-2 text-gray-900">
+                  Channel Name
+                </label>
+                <input
+                  type="text"
+                  value={styleData.channelName}
+                  onChange={(e) => handleSectionChange("channelName", e.target.value)}
+                  placeholder="e.g., TechExplained, CreativeStudio, GamingHub"
+                  className="w-full p-3 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+
+              {/* Channel Description */}
+              <div>
+                <label className="block text-sm font-semibold mb-2 text-gray-900">
+                  Channel Description
+                </label>
+                <textarea
+                  value={styleData.channelDescription}
+                  onChange={(e) => handleSectionChange("channelDescription", e.target.value)}
+                  placeholder="Describe what your channel is about, its mission, and what makes it unique..."
+                  className="w-full p-3 border border-gray-300 rounded-md min-h-[80px] focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+
+              {/* Target Audience */}
+              <div>
+                <label className="block text-sm font-semibold mb-2 text-gray-900">
+                  Target Audience
+                </label>
+                <textarea
+                  value={styleData.targetAudience}
+                  onChange={(e) => handleSectionChange("targetAudience", e.target.value)}
+                  placeholder="Describe your target viewers: demographics, interests, preferences, what they value..."
+                  className="w-full p-3 border border-gray-300 rounded-md min-h-[80px] focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+
+              {/* Content Type */}
+              <div>
+                <label className="block text-sm font-semibold mb-2 text-gray-900">
+                  Content Type
+                </label>
+                <input
+                  type="text"
+                  value={styleData.contentType}
+                  onChange={(e) => handleSectionChange("contentType", e.target.value)}
+                  placeholder="e.g., Educational tutorials, Entertainment, Product reviews, Storytelling"
+                  className="w-full p-3 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+
+              {/* Brand Values */}
+              <div>
+                <label className="block text-sm font-semibold mb-2 text-gray-900">
+                  Brand Values
+                </label>
+                <textarea
+                  value={styleData.brandValues}
+                  onChange={(e) => handleSectionChange("brandValues", e.target.value)}
+                  placeholder="What does your brand stand for? Core values, principles, what you want to communicate..."
+                  className="w-full p-3 border border-gray-300 rounded-md min-h-[80px] focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+
+              {/* Brand Messaging */}
+              <div>
+                <label className="block text-sm font-semibold mb-2 text-gray-900">
+                  Brand Messaging
+                </label>
+                <textarea
+                  value={styleData.brandMessaging}
+                  onChange={(e) => handleSectionChange("brandMessaging", e.target.value)}
+                  placeholder="Key messages you want to convey through your content. What should viewers take away?"
+                  className="w-full p-3 border border-gray-300 rounded-md min-h-[80px] focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+
+              {/* Brand Tone */}
+              <div>
+                <label className="block text-sm font-semibold mb-2 text-gray-900">
+                  Brand Tone & Voice
+                </label>
+                <textarea
+                  value={styleData.brandTone}
+                  onChange={(e) => handleSectionChange("brandTone", e.target.value)}
+                  placeholder="How should your brand sound? Professional, friendly, humorous, authoritative, casual..."
+                  className="w-full p-3 border border-gray-300 rounded-md min-h-[80px] focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+
+              {/* Content Strategy */}
+              <div>
+                <label className="block text-sm font-semibold mb-2 text-gray-900">
+                  Content Strategy & What Works
+                </label>
+                <textarea
+                  value={styleData.contentStrategy}
+                  onChange={(e) => handleSectionChange("contentStrategy", e.target.value)}
+                  placeholder="What content performs well? What topics, formats, or approaches resonate with your audience?"
+                  className="w-full p-3 border border-gray-300 rounded-md min-h-[80px] focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+
+              {/* Viewer Preferences */}
+              <div>
+                <label className="block text-sm font-semibold mb-2 text-gray-900">
+                  Viewer Preferences & Insights
+                </label>
+                <textarea
+                  value={styleData.viewerPreferences}
+                  onChange={(e) => handleSectionChange("viewerPreferences", e.target.value)}
+                  placeholder="What do your viewers like? Visual preferences, content length, style preferences, engagement patterns..."
+                  className="w-full p-3 border border-gray-300 rounded-md min-h-[80px] focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Visual Style Section */}
+          <div className="border-b border-gray-300 pb-6 mb-6">
+            <h3 className="text-lg font-bold mb-4 text-gray-900">🎨 Visual Style</h3>
+            <p className="text-sm text-gray-600 mb-4">
+              Define the visual aesthetic that matches your brand identity and resonates with your audience.
+            </p>
+          </div>
+
           {/* Animation Style */}
           <div>
             <label className="block text-sm font-semibold mb-2 text-gray-900">

@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 import os
 from pathlib import Path
 
-from app.api import planning, assets, generation, webhooks
+from app.api import planning, assets, generation, webhooks, learning
 
 # Load environment variables
 # Try to load from root directory .env.local first, then .env, then backend/.env
@@ -97,6 +97,7 @@ app.include_router(planning.router)
 app.include_router(assets.router)
 app.include_router(generation.router)
 app.include_router(webhooks.router)
+app.include_router(learning.router)
 
 
 @app.get("/")

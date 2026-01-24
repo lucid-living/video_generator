@@ -43,6 +43,22 @@ def generate_storyboard(request: StoryboardGenerationRequest) -> Storyboard:
     """
     model = _get_gemini_client()
     
+    # Detect if this is children's content
+    is_childrens_content = (
+        "children" in request.style_guide.lower() or 
+        "lullaby" in request.style_guide.lower() or 
+        "under 2" in request.style_guide.lower() or 
+        "under 5" in request.style_guide.lower() or
+        "toddler" in request.style_guide.lower() or
+        "baby" in request.style_guide.lower()
+    )
+    is_christian_content = (
+        "christian" in request.style_guide.lower() or 
+        "biblical" in request.style_guide.lower() or 
+        "faith" in request.style_guide.lower() or
+        "values" in request.style_guide.lower()
+    )
+    
     # Construct system prompt with explicit JSON structure requirement
     system_prompt = f"""You are a creative director generating a music video storyboard.
 
@@ -75,9 +91,35 @@ Requirements:
 - Generate {request.num_shots if request.num_shots else "8-12"} shots
 - Total duration should be approximately {request.max_duration if request.max_duration else "30-60"} seconds
 - Make lyrics creative and match the theme
-- Each base_video_prompt should be detailed and cinematic
+- Each base_video_prompt should be detailed and cinematic"""
+    
+    # Add children's content guidelines
+    if is_childrens_content:
+        system_prompt += """
 
-Output ONLY the JSON array, nothing else."""
+CHILDREN'S CONTENT REQUIREMENTS (Ages 0-5):
+- Lyrics must be age-appropriate, simple, and easy to understand
+- For lullabies (ages 0-2): Focus on calming, sleep-inducing themes (stars, moons, dreams, peaceful nature)
+- For educational content (ages 2-5): Include positive messages and simple life lessons
+- Avoid any scary, dark, or intense themes
+- Use gentle, soothing language
+- Visual prompts should be calming and peaceful
+- Maintain a consistent, friendly tone throughout"""
+    
+    # Add Christian values integration
+    if is_christian_content:
+        system_prompt += """
+
+CHRISTIAN VALUES INTEGRATION:
+- Naturally integrate biblical themes and Christian values into lyrics
+- Focus on: love, kindness, forgiveness, gratitude, honesty, helping others
+- Use age-appropriate biblical stories and parables (Noah's Ark, Good Samaritan, etc.)
+- Visual prompts should show positive role models demonstrating Christian character
+- Emphasize community, fellowship, and caring for others
+- Use nature and creation themes that reflect God's love
+- Ensure all content aligns with Christian values and teachings"""
+    
+    system_prompt += "\n\nOutput ONLY the JSON array, nothing else."
 
     try:
         response = model.generate_content(system_prompt)

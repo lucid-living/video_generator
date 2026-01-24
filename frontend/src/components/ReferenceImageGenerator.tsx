@@ -3,9 +3,10 @@
  */
 
 import { useState, useEffect, useRef } from "react";
-import { generateReferenceImage } from "../services/api";
+import { generateReferenceImage, submitImageFeedback } from "../services/api";
 import { saveWorkflow } from "../services/supabase";
 import { uploadReferenceImage } from "../services/imageStorage";
+import { ReferenceImageLibrary } from "./ReferenceImageLibrary";
 import type { Storyboard, ReferenceImage, WorkflowState } from "../types/storyboard";
 
 interface ReferenceImageGeneratorProps {
@@ -32,14 +33,117 @@ export function ReferenceImageGenerator({
   const [savingToStyleGuide, setSavingToStyleGuide] = useState<string | null>(null);
   const generatingRef = useRef<Set<number>>(new Set()); // Track which shots are currently generating
   const generateAllInProgressRef = useRef<boolean>(false); // Track if "Generate All" is in progress
-  const [useImageReference, setUseImageReference] = useState<Map<number, string>>(new Map()); // Track which shot uses which previous image as reference
+  const [useImageReference, setUseImageReference] = useState<Map<number, string>>(new Map()); // Track which shot uses which previous image as reference (deprecated, use useImageReferences)
+  const [useImageReferences, setUseImageReferences] = useState<Map<number, string[]>>(new Map()); // Track which shot uses which previous images as references (up to 14)
+  const [userReferenceImages, setUserReferenceImages] = useState<string[]>([]); // User-uploaded/favorited reference images
 
   // Sync generatedImages with workflow when workflow_id changes (e.g., when loading a different project)
   useEffect(() => {
-    if (workflow.reference_images) {
-      setGeneratedImages(workflow.reference_images);
+    if (workflow.reference_images && workflow.reference_images.length > 0) {
+      console.log(`Loading ${workflow.reference_images.length} images from workflow ${workflow.workflow_id}`);
+      
+      // Load images from storage URLs if base64_data is missing
+      const loadImagesFromStorage = async () => {
+        try {
+          const imagesWithData = await Promise.all(
+            workflow.reference_images.map(async (img, index) => {
+              console.log(`Image ${index + 1}/${workflow.reference_images.length}:`, {
+                image_id: img.image_id,
+                has_base64: !!img.base64_data,
+                has_storage_url: !!img.storage_url,
+                storage_url: img.storage_url,
+                approved: img.approved,
+              });
+              
+              // If we already have base64_data, use it
+              if (img.base64_data && img.base64_data.length > 100) {
+                console.log(`Image ${img.image_id} already has base64_data, using it`);
+                return img;
+              }
+              
+              // If we have storage_url but no base64_data, try to load from storage
+              if (img.storage_url) {
+                try {
+                  console.log(`Loading image ${img.image_id} from storage: ${img.storage_url}`);
+                  const response = await fetch(img.storage_url, {
+                    method: 'GET',
+                    mode: 'cors',
+                  });
+                  
+                  if (response.ok) {
+                    const blob = await response.blob();
+                    const reader = new FileReader();
+                    return new Promise<ReferenceImage>((resolve) => {
+                      reader.onloadend = () => {
+                        const base64 = reader.result as string;
+                        console.log(`Successfully loaded image ${img.image_id} from storage`);
+                        resolve({
+                          ...img,
+                          base64_data: base64,
+                        });
+                      };
+                      reader.onerror = (error) => {
+                        console.warn(`Failed to read image blob from ${img.storage_url}:`, error);
+                        // Return image with storage_url - browser can display it directly
+                        resolve(img);
+                      };
+                      reader.readAsDataURL(blob);
+                    });
+                  } else {
+                    console.warn(`Failed to fetch image from storage ${img.storage_url}: ${response.status} ${response.statusText}`);
+                    // Return image with storage_url - browser might still be able to display it
+                    return img;
+                  }
+                } catch (error) {
+                  console.warn(`Failed to load image from storage ${img.storage_url}:`, error);
+                  // Return image with storage_url - browser might still be able to display it
+                  return img;
+                }
+              }
+              
+              // No storage_url and no base64_data - this is a broken image
+              if (!img.base64_data || img.base64_data.length < 100) {
+                console.error(
+                  `CRITICAL: Image ${img.image_id} has no base64_data and no storage_url - cannot display. ` +
+                  `This image was saved incorrectly. Please regenerate it.`
+                );
+                // Set error to alert user
+                setError(
+                  `Warning: Some images cannot be displayed (missing data). ` +
+                  `Please regenerate images for shots: ${img.shot_indices.join(", ")}`
+                );
+              }
+              
+              return img;
+            })
+          );
+          
+          // Sort images to prioritize approved ones and ensure consistent ordering
+          // Approved images first, then by image_id for consistency
+          const sortedImages = imagesWithData.sort((a, b) => {
+            // Approved images come first
+            if (a.approved && !b.approved) return -1;
+            if (!a.approved && b.approved) return 1;
+            // Then sort by image_id for consistency
+            return a.image_id.localeCompare(b.image_id);
+          });
+          
+          console.log(`Loaded ${sortedImages.length} images, setting state`);
+          setGeneratedImages(sortedImages);
+        } catch (error) {
+          console.error("Failed to load images from storage:", error);
+          // Fallback: use images as-is from workflow (they might have storage_urls that browser can display)
+          console.log("Falling back to workflow images as-is");
+          setGeneratedImages(workflow.reference_images);
+        }
+      };
+      
+      loadImagesFromStorage();
+    } else {
+      console.log("No reference images in workflow, clearing state");
+      setGeneratedImages([]);
     }
-  }, [workflow.workflow_id]);
+  }, [workflow.workflow_id, workflow.reference_images]);
 
   const handleGenerateImage = async (shotIndex: number) => {
     // Prevent duplicate generation - check ref BEFORE any state changes
@@ -72,11 +176,30 @@ export function ReferenceImageGenerator({
           base64_data: img.base64_data,
         }));
       
-      // Check if user wants to use a previous image as direct reference
-      const referenceImageId = useImageReference.get(shotIndex);
-      const referenceImage = referenceImageId 
-        ? generatedImages.find(img => img.image_id === referenceImageId)
-        : null;
+      // Check if user wants to use previous images as direct references
+      const referenceImageIds = useImageReferences.get(shotIndex) || [];
+      // Also check old single image reference for backward compatibility
+      const oldReferenceImageId = useImageReference.get(shotIndex);
+      const allReferenceImageIds = oldReferenceImageId && !referenceImageIds.includes(oldReferenceImageId)
+        ? [...referenceImageIds, oldReferenceImageId]
+        : referenceImageIds;
+      
+      // Get reference images - prefer storage_url if available (for Kie.ai API), otherwise use base64
+      const referenceImagesFromGenerated = allReferenceImageIds
+        .map(id => generatedImages.find(img => img.image_id === id))
+        .filter((img): img is ReferenceImage => img !== undefined)
+        .map(img => {
+          // Prefer storage_url (for Kie.ai API compatibility), fallback to base64
+          return img.storage_url || img.base64_data;
+        });
+      
+      // Combine user-uploaded/favorited reference images with generated reference images
+      // User images come first (they're the most important), then generated images
+      // Limit to 14 total (Gemini API limit)
+      const allReferenceImages = [
+        ...userReferenceImages,
+        ...referenceImagesFromGenerated
+      ].slice(0, 14);
       
       const image = await generateReferenceImage(
         storyboard.style_guide,
@@ -84,28 +207,79 @@ export function ReferenceImageGenerator({
         [shotIndex],
         previousImages,
         styleGuideImages,
-        !!referenceImage, // use_image_reference
-        referenceImage?.base64_data || "" // reference_image_base64
+        allReferenceImages.length > 0, // use_image_reference
+        "", // reference_image_base64 (deprecated, use reference_images_base64)
+        allReferenceImages // reference_images_base64
       );
 
       // Initialize with approved: false
       const newImage = { ...image, approved: false };
+      
+      // Automatically upload to Supabase Storage to avoid database size limits
+      // Store URL instead of base64_data in database
+      let imageWithStorage: ReferenceImage = newImage;
+      try {
+        console.log(`Uploading image ${newImage.image_id} to Google Drive...`);
+        const storageUrl = await uploadReferenceImage(
+          newImage.base64_data,
+          newImage.image_id,
+          newImage.description,
+          workflow.workflow_id
+        );
+        console.log(`Image uploaded successfully: ${storageUrl}`);
+        imageWithStorage = {
+          ...newImage,
+          storage_url: storageUrl,
+          // Keep base64_data in memory for immediate display, but don't save to DB
+        };
+      } catch (uploadError) {
+        console.error(`Failed to upload image ${newImage.image_id} to storage:`, uploadError);
+        setError(`Warning: Failed to upload image to storage. Image will be saved with base64 data (may cause slow saves). Error: ${uploadError instanceof Error ? uploadError.message : "Unknown error"}`);
+        // Continue with base64_data if upload fails (fallback)
+        // This ensures images can still be displayed even if storage upload fails
+      }
+      
       // Remove any existing images for this shot before adding the new one
       const filteredImages = generatedImages.filter(
         (img) => !img.shot_indices.includes(shotIndex)
       );
-      const updatedImages = [...filteredImages, newImage];
-      setGeneratedImages(updatedImages);
+      
+      // Create image for database (without base64_data if we have storage_url)
+      // CRITICAL: Never save images without at least one of storage_url or base64_data
+      const imageForDatabase: ReferenceImage = imageWithStorage.storage_url
+        ? {
+            ...imageWithStorage,
+            base64_data: "", // Don't store base64 in DB if we have storage_url
+          }
+        : imageWithStorage.base64_data && imageWithStorage.base64_data.length > 100
+        ? imageWithStorage // Keep base64_data if no storage_url (but base64 exists)
+        : (() => {
+            // This should never happen, but if it does, throw an error
+            console.error(`CRITICAL: Cannot save image ${imageWithStorage.image_id} - no storage_url and no base64_data`);
+            throw new Error(`Cannot save image ${imageWithStorage.image_id} - missing both storage_url and base64_data`);
+          })();
+      
+      const updatedImages = [...filteredImages, imageForDatabase];
+      // Keep full image with base64_data in state for display
+      const updatedImagesForDisplay = [...filteredImages, imageWithStorage];
+      setGeneratedImages(updatedImagesForDisplay);
 
-      // Update workflow with new images
+      // Update workflow with new images (database version without large base64)
       const updatedWorkflow: WorkflowState = {
         ...workflow,
         reference_images: updatedImages,
         status: workflow.status === "planning" ? "assets" : workflow.status,
       };
 
-      await saveWorkflow(updatedWorkflow);
-      onImagesGenerated(updatedImages);
+      try {
+        await saveWorkflow(updatedWorkflow);
+        console.log(`Workflow saved successfully with ${updatedImages.length} images`);
+      } catch (saveError) {
+        console.error("Failed to save workflow:", saveError);
+        throw new Error(`Failed to save workflow: ${saveError instanceof Error ? saveError.message : "Unknown error"}`);
+      }
+      
+      onImagesGenerated(updatedImagesForDisplay);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to generate image");
     } finally {
@@ -123,12 +297,16 @@ export function ReferenceImageGenerator({
 
     generateAllInProgressRef.current = true;
     setError(null);
-    let newImages: ReferenceImage[] = [...generatedImages];
+    let newImagesForDatabase: ReferenceImage[] = [...generatedImages.map(img => 
+      // Convert display images (with base64) to database format (without base64 if storage_url exists)
+      img.storage_url && img.base64_data ? { ...img, base64_data: "" } : img
+    )];
+    let newImagesForDisplay: ReferenceImage[] = [...generatedImages];
     
     // Generate images for all shots sequentially
     for (const shot of storyboard.shots) {
       // Skip if image already exists for this shot
-      const existingImage = newImages.find((img) =>
+      const existingImage = newImagesForDisplay.find((img) =>
         img.shot_indices.includes(shot.line_index)
       );
       
@@ -148,13 +326,13 @@ export function ReferenceImageGenerator({
       
       try {
         // Get previous images for consistency (only images from earlier shots)
-        // Include the full description and base64 data for better character consistency
-        const previousImages = newImages
+        // Use display images which have base64_data for API calls
+        const previousImages = newImagesForDisplay
           .filter(img => img.shot_indices[0] < shot.line_index)
           .map(img => ({
-            description: img.description, // Full description from the storyboard prompt
+            description: img.description,
             shot_indices: img.shot_indices,
-            base64_data: img.base64_data,
+            base64_data: img.base64_data || img.storage_url || "",
           }));
         
         const image = await generateReferenceImage(
@@ -167,8 +345,56 @@ export function ReferenceImageGenerator({
 
         // Initialize with approved: false
         const newImage = { ...image, approved: false };
-        newImages = [...newImages, newImage];
-        setGeneratedImages(newImages);
+        
+        // Automatically upload to Supabase Storage to avoid database size limits
+        let imageWithStorage: ReferenceImage = newImage;
+        try {
+          console.log(`Uploading image ${newImage.image_id} to Google Drive...`);
+          const storageUrl = await uploadReferenceImage(
+            newImage.base64_data,
+            newImage.image_id,
+            newImage.description,
+            workflow.workflow_id
+          );
+          console.log(`Image uploaded successfully: ${storageUrl}`);
+          imageWithStorage = {
+            ...newImage,
+            storage_url: storageUrl,
+          };
+        } catch (uploadError) {
+          console.error(`Failed to upload image ${newImage.image_id} to storage:`, uploadError);
+          setError(`Warning: Failed to upload image to storage. Image will be saved with base64 data (may cause slow saves). Error: ${uploadError instanceof Error ? uploadError.message : "Unknown error"}`);
+          // Continue with base64_data if upload fails (fallback)
+        }
+        
+        // Create image for database (without base64_data if we have storage_url)
+        // CRITICAL: Never save images without at least one of storage_url or base64_data
+        const imageForDatabase: ReferenceImage = imageWithStorage.storage_url
+          ? {
+              ...imageWithStorage,
+              base64_data: "", // Don't store base64 in DB if we have storage_url
+            }
+          : imageWithStorage.base64_data && imageWithStorage.base64_data.length > 100
+          ? imageWithStorage // Keep base64_data if no storage_url (but base64 exists)
+          : (() => {
+              // This should never happen, but if it does, log error and skip this image
+              console.error(`CRITICAL: Cannot save image ${imageWithStorage.image_id} - no storage_url and no base64_data`);
+              return imageWithStorage; // Return as-is, saveWorkflow will filter it out
+            })();
+        
+        // Remove any existing image for this shot
+        newImagesForDatabase = newImagesForDatabase.filter(
+          (img) => !img.shot_indices.includes(shot.line_index)
+        );
+        newImagesForDisplay = newImagesForDisplay.filter(
+          (img) => !img.shot_indices.includes(shot.line_index)
+        );
+        
+        // Add new images
+        newImagesForDatabase = [...newImagesForDatabase, imageForDatabase];
+        newImagesForDisplay = [...newImagesForDisplay, imageWithStorage];
+        
+        setGeneratedImages(newImagesForDisplay);
       } catch (err) {
         console.error(`Failed to generate image for shot ${shot.line_index}:`, err);
         // Continue with next shot even if one fails
@@ -181,37 +407,152 @@ export function ReferenceImageGenerator({
     setGenerating(null);
     generateAllInProgressRef.current = false;
 
-    // Save all images to workflow
+    // Save all images to workflow (database version without base64)
     try {
       const updatedWorkflow: WorkflowState = {
         ...workflow,
-        reference_images: newImages,
+        reference_images: newImagesForDatabase,
         status: workflow.status === "planning" ? "assets" : workflow.status,
       };
       await saveWorkflow(updatedWorkflow);
-      onImagesGenerated(newImages);
+      console.log(`Workflow saved successfully with ${newImagesForDatabase.length} images`);
+      onImagesGenerated(newImagesForDisplay);
     } catch (err) {
-      setError("Failed to save images to workflow");
+      console.error("Failed to save workflow:", err);
+      setError(`Failed to save images to workflow: ${err instanceof Error ? err.message : "Unknown error"}`);
       generateAllInProgressRef.current = false; // Reset on error too
     }
   };
 
   const getImageForShot = (shotIndex: number): ReferenceImage | undefined => {
-    return generatedImages.find((img) => img.shot_indices.includes(shotIndex));
+    // Find all images for this shot
+    const imagesForShot = generatedImages.filter((img) => img.shot_indices.includes(shotIndex));
+    
+    if (imagesForShot.length === 0) {
+      return undefined;
+    }
+    
+    // Prioritize approved images - if any approved image exists, return the first approved one
+    const approvedImage = imagesForShot.find((img) => img.approved === true);
+    if (approvedImage) {
+      return approvedImage;
+    }
+    
+    // Otherwise, return the most recent image (last in array, as they're added sequentially)
+    return imagesForShot[imagesForShot.length - 1];
   };
 
   const handleApproveImage = async (imageId: string) => {
-    const updatedImages = generatedImages.map((img) =>
-      img.image_id === imageId ? { ...img, approved: true } : img
-    );
-    setGeneratedImages(updatedImages);
+    try {
+      // Mark the selected image as approved
+      // Also unapprove any other images for the same shots to ensure only one approved image per shot
+      const imageToApprove = generatedImages.find((img) => img.image_id === imageId);
+      if (!imageToApprove) {
+        setError("Image not found");
+        return;
+      }
 
-    const updatedWorkflow: WorkflowState = {
-      ...workflow,
-      reference_images: updatedImages,
-    };
-    await saveWorkflow(updatedWorkflow);
-    onImagesGenerated(updatedImages);
+      const updatedImages = generatedImages.map((img) => {
+        // Approve the selected image
+        if (img.image_id === imageId) {
+          return { ...img, approved: true };
+        }
+        // Unapprove any other images that share the same shot indices
+        if (img.shot_indices.some((idx) => imageToApprove.shot_indices.includes(idx))) {
+          return { ...img, approved: false };
+        }
+        return img;
+      });
+      
+      setGeneratedImages(updatedImages);
+
+      const updatedWorkflow: WorkflowState = {
+        ...workflow,
+        reference_images: updatedImages,
+      };
+      
+      await saveWorkflow(updatedWorkflow);
+      onImagesGenerated(updatedImages);
+      
+      // Submit feedback for learning (non-blocking)
+      try {
+        await submitImageFeedback(
+          imageToApprove.image_id,
+          workflow.workflow_id,
+          true, // approved
+          imageToApprove.favorited || false,
+          imageToApprove.description,
+          imageToApprove.rating,
+          storyboard.style_guide,
+          undefined, // prompt_used
+          imageToApprove.shot_indices,
+          undefined, // channel_name
+          undefined // content_type
+        );
+      } catch (feedbackError) {
+        console.warn("Failed to submit feedback (non-critical):", feedbackError);
+      }
+      
+      // Clear any previous errors on success
+      setError(null);
+    } catch (error) {
+      console.error("Failed to approve image:", error);
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      setError(`Failed to approve image: ${errorMessage}`);
+      // Don't throw - let the user see the error and try again
+    }
+  };
+
+  const handleFavoriteImage = async (imageId: string, favorited: boolean) => {
+    try {
+      const imageToFavorite = generatedImages.find((img) => img.image_id === imageId);
+      if (!imageToFavorite) {
+        setError("Image not found");
+        return;
+      }
+
+      const updatedImages = generatedImages.map((img) => {
+        if (img.image_id === imageId) {
+          return { ...img, favorited };
+        }
+        return img;
+      });
+      
+      setGeneratedImages(updatedImages);
+
+      const updatedWorkflow: WorkflowState = {
+        ...workflow,
+        reference_images: updatedImages,
+      };
+      
+      await saveWorkflow(updatedWorkflow);
+      onImagesGenerated(updatedImages);
+      
+      // Submit feedback for learning (non-blocking)
+      try {
+        await submitImageFeedback(
+          imageToFavorite.image_id,
+          workflow.workflow_id,
+          imageToFavorite.approved || false,
+          favorited,
+          imageToFavorite.description,
+          imageToFavorite.rating,
+          storyboard.style_guide,
+          undefined,
+          imageToFavorite.shot_indices,
+          undefined,
+          undefined
+        );
+      } catch (feedbackError) {
+        console.warn("Failed to submit feedback (non-critical):", feedbackError);
+      }
+      
+      setError(null);
+    } catch (error) {
+      console.error("Failed to favorite image:", error);
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      setError(`Failed to favorite image: ${errorMessage}`);
+    }
   };
 
   const handleRejectImage = async (shotIndex: number) => {
@@ -221,10 +562,14 @@ export function ReferenceImageGenerator({
     );
     setGeneratedImages(updatedImages);
 
-    // Clear any reference image selection for this shot
+    // Clear any reference image selections for this shot
     const newMap = new Map(useImageReference);
     newMap.delete(shotIndex);
     setUseImageReference(newMap);
+    
+    const newReferencesMap = new Map(useImageReferences);
+    newReferencesMap.delete(shotIndex);
+    setUseImageReferences(newReferencesMap);
 
     const updatedWorkflow: WorkflowState = {
       ...workflow,
@@ -255,11 +600,12 @@ export function ReferenceImageGenerator({
   const handleSaveToStyleGuide = async (image: ReferenceImage) => {
     setSavingToStyleGuide(image.image_id);
     try {
-      // Upload image to Supabase storage
+      // Upload image to Google Drive
       const storageUrl = await uploadReferenceImage(
         image.base64_data,
         image.image_id,
-        image.description
+        image.description,
+        workflow.workflow_id
       );
 
       // Update image with storage URL and saved flag
@@ -298,11 +644,30 @@ export function ReferenceImageGenerator({
 
   return (
     <div className="space-y-4">
+      {/* Reference Image Library - Upload/Select Your Own Images */}
+      <ReferenceImageLibrary
+        onSelectImages={(images) => {
+          setUserReferenceImages(images);
+        }}
+        selectedImages={userReferenceImages}
+        maxSelections={14}
+        showStyleExtraction={true}
+        onStyleExtracted={(styleGuide) => {
+          // Could update the storyboard style guide or show a notification
+          alert("Style extracted! Consider updating your style guide with this information.");
+        }}
+      />
+
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-lg font-medium mb-1">Reference Images</h3>
           <p className="text-sm text-gray-600">
             Generate preview images for each shot to visualize the video style
+            {userReferenceImages.length > 0 && (
+              <span className="ml-2 text-blue-600 font-medium">
+                ({userReferenceImages.length} reference image{userReferenceImages.length !== 1 ? 's' : ''} selected)
+              </span>
+            )}
           </p>
         </div>
         <button
@@ -351,7 +716,7 @@ export function ReferenceImageGenerator({
                     onClick={() => setExpandedImage(image)}
                   >
                     <img
-                      src={image.base64_data}
+                      src={image.base64_data || image.storage_url || ""}
                       alt={image.description}
                       className={`w-full h-32 object-cover rounded-md border-2 transition-all ${
                         image.approved
@@ -360,6 +725,63 @@ export function ReferenceImageGenerator({
                           ? "border-yellow-400"
                           : "border-gray-200"
                       } group-hover:opacity-90`}
+                      onError={async (e) => {
+                        const target = e.target as HTMLImageElement;
+                        const originalSrc = target.src;
+                        
+                        console.error(`Failed to load image ${image.image_id}:`, {
+                          has_base64: !!image.base64_data && image.base64_data.length > 100,
+                          has_storage_url: !!image.storage_url,
+                          storage_url: image.storage_url,
+                          attempted_src: originalSrc,
+                        });
+                        
+                        // If storage_url failed, try to reload from storage with a fresh fetch
+                        if (image.storage_url && originalSrc === image.storage_url) {
+                          console.log(`Attempting to reload image ${image.image_id} from storage...`);
+                          try {
+                            // Try fetching with cache busting
+                            const response = await fetch(`${image.storage_url}?t=${Date.now()}`, {
+                              method: 'GET',
+                              mode: 'cors',
+                              cache: 'no-cache',
+                            });
+                            
+                            if (response.ok) {
+                              const blob = await response.blob();
+                              const reader = new FileReader();
+                              reader.onloadend = () => {
+                                const base64 = reader.result as string;
+                                console.log(`Successfully reloaded image ${image.image_id} from storage`);
+                                target.src = base64;
+                                // Update the image in state with the loaded base64
+                                const updatedImages = generatedImages.map((img) =>
+                                  img.image_id === image.image_id
+                                    ? { ...img, base64_data: base64 }
+                                    : img
+                                );
+                                setGeneratedImages(updatedImages);
+                              };
+                              reader.onerror = () => {
+                                console.error(`Failed to convert blob to base64 for image ${image.image_id}`);
+                                target.src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100'%3E%3Crect fill='%23f3f4f6' width='100' height='100'/%3E%3Ctext x='50%25' y='50%25' text-anchor='middle' dy='.3em' fill='%239ca3af' font-family='sans-serif' font-size='12'%3EFailed to load%3C/text%3E%3C/svg%3E";
+                              };
+                              reader.readAsDataURL(blob);
+                              return; // Don't show error placeholder yet
+                            } else {
+                              console.error(`Storage fetch failed with status ${response.status}: ${response.statusText}`);
+                            }
+                          } catch (fetchError) {
+                            console.error(`Error fetching from storage:`, fetchError);
+                          }
+                        }
+                        
+                        // Show error placeholder if all retries failed
+                        target.src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100'%3E%3Crect fill='%23f3f4f6' width='100' height='100'/%3E%3Ctext x='50%25' y='50%25' text-anchor='middle' dy='.3em' fill='%239ca3af' font-family='sans-serif' font-size='12'%3EFailed to load%3C/text%3E%3C/svg%3E";
+                      }}
+                      onLoad={() => {
+                        console.log(`Successfully loaded image ${image.image_id}`);
+                      }}
                     />
                     <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-0 group-hover:bg-opacity-20 transition-all rounded-md">
                       <span className="text-white text-xs opacity-0 group-hover:opacity-100 transition-opacity font-medium">
@@ -383,6 +805,20 @@ export function ReferenceImageGenerator({
                         <span className="text-xs text-green-600 font-medium px-2 py-1 bg-green-50 rounded">
                           ✓ Approved
                         </span>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleFavoriteImage(image.image_id, !image.favorited);
+                          }}
+                          className={`text-xs px-2 py-1 rounded ${
+                            image.favorited
+                              ? "bg-yellow-500 text-white hover:bg-yellow-600"
+                              : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                          }`}
+                          title={image.favorited ? "Remove from favorites" : "Add to favorites"}
+                        >
+                          {image.favorited ? "⭐ Favorited" : "☆ Favorite"}
+                        </button>
                         {!image.saved_to_style_guide && (
                           <button
                             onClick={(e) => {
@@ -446,38 +882,103 @@ export function ReferenceImageGenerator({
                     )}
                   </div>
                   
-                  {/* Reference Image Selection */}
+                  {/* Reference Images Selection (Multiple - up to 14) */}
                   {generatedImages.filter(img => img.shot_indices[0] < shot.line_index).length > 0 && (
-                    <div className="space-y-1">
-                      <label className="text-xs text-gray-600 block">
-                        Use previous image as reference:
+                    <div className="space-y-2">
+                      <label className="text-xs text-gray-600 block font-medium">
+                        Use previous images as references (up to 14 for Gemini API):
                       </label>
-                      <select
-                        value={useImageReference.get(shot.line_index) || ""}
-                        onChange={(e) => {
-                          const newMap = new Map(useImageReference);
-                          if (e.target.value) {
-                            newMap.set(shot.line_index, e.target.value);
-                          } else {
-                            newMap.delete(shot.line_index);
-                          }
-                          setUseImageReference(newMap);
-                        }}
-                        disabled={isGenerating || generating !== null}
-                        className="w-full text-xs px-2 py-1 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 disabled:cursor-not-allowed"
-                      >
-                        <option value="">No reference (text prompt only)</option>
+                      <div className="max-h-32 overflow-y-auto border border-gray-200 rounded-md p-2 space-y-1 bg-gray-50">
                         {generatedImages
                           .filter(img => img.shot_indices[0] < shot.line_index)
-                          .map((prevImg) => (
-                            <option key={prevImg.image_id} value={prevImg.image_id}>
-                              Shot {prevImg.shot_indices[0]} - {prevImg.description.substring(0, 40)}...
-                            </option>
-                          ))}
-                      </select>
-                      {useImageReference.get(shot.line_index) && (
-                        <p className="text-xs text-blue-600">
-                          ✨ Using Nano Banana Pro (KIE_AI_API_KEY) for better character consistency
+                          .map((prevImg) => {
+                            const selectedIds = useImageReferences.get(shot.line_index) || [];
+                            const isSelected = selectedIds.includes(prevImg.image_id);
+                            const isAtLimit = selectedIds.length >= 14 && !isSelected;
+                            
+                            return (
+                              <label
+                                key={prevImg.image_id}
+                                className={`flex items-start gap-2 p-1.5 rounded cursor-pointer transition-colors ${
+                                  isSelected
+                                    ? "bg-blue-50 border border-blue-200"
+                                    : isAtLimit
+                                    ? "opacity-50 cursor-not-allowed"
+                                    : "hover:bg-gray-100"
+                                }`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  onChange={(e) => {
+                                    const newMap = new Map(useImageReferences);
+                                    const currentIds = newMap.get(shot.line_index) || [];
+                                    
+                                    if (e.target.checked) {
+                                      // Add to selection (limit to 14)
+                                      if (currentIds.length < 14) {
+                                        const newIds = [...currentIds, prevImg.image_id];
+                                        newMap.set(shot.line_index, newIds);
+                                        setUseImageReferences(newMap);
+                                      }
+                                    } else {
+                                      // Remove from selection
+                                      const newIds = currentIds.filter(id => id !== prevImg.image_id);
+                                      if (newIds.length > 0) {
+                                        newMap.set(shot.line_index, newIds);
+                                      } else {
+                                        newMap.delete(shot.line_index);
+                                      }
+                                      setUseImageReferences(newMap);
+                                    }
+                                  }}
+                                  disabled={isGenerating || generating !== null || isAtLimit}
+                                  className="mt-0.5 h-3 w-3 text-blue-600 focus:ring-blue-500 border-gray-300 rounded disabled:opacity-50"
+                                />
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-1">
+                                    <span className="text-xs font-medium text-gray-900">
+                                      Shot {prevImg.shot_indices[0]}
+                                    </span>
+                                    {isSelected && (
+                                      <span className="text-xs text-blue-600">✓</span>
+                                    )}
+                                  </div>
+                                  <p className="text-xs text-gray-600 line-clamp-1">
+                                    {prevImg.description.substring(0, 50)}...
+                                  </p>
+                                </div>
+                              </label>
+                            );
+                          })}
+                      </div>
+                      {(useImageReferences.get(shot.line_index) || []).length > 0 && (
+                        <div className="space-y-1">
+                          <p className="text-xs text-blue-600 font-medium">
+                            ✨ Using Nano Banana Pro (KIE_AI_API_KEY) with {(useImageReferences.get(shot.line_index) || []).length} reference image(s) for better character consistency
+                          </p>
+                          <p className="text-xs text-gray-500">
+                            Selected: {(useImageReferences.get(shot.line_index) || []).map(id => {
+                              const img = generatedImages.find(i => i.image_id === id);
+                              return img ? `Shot ${img.shot_indices[0]}` : '';
+                            }).filter(Boolean).join(', ')}
+                            {(useImageReferences.get(shot.line_index) || []).length >= 14 && (
+                              <span className="text-orange-600 ml-1">(Limit reached)</span>
+                            )}
+                          </p>
+                          {(useImageReferences.get(shot.line_index) || []).some(id => {
+                            const img = generatedImages.find(i => i.image_id === id);
+                            return img && !img.storage_url;
+                          }) && (
+                            <p className="text-xs text-amber-600">
+                              ⚠ Note: Some images use base64. For best results, save images to Style Guide first to get URLs.
+                            </p>
+                          )}
+                        </div>
+                      )}
+                      {(useImageReferences.get(shot.line_index) || []).length === 0 && (
+                        <p className="text-xs text-gray-500 italic">
+                          No references selected - will use text prompt only
                         </p>
                       )}
                     </div>
@@ -521,7 +1022,47 @@ export function ReferenceImageGenerator({
               ×
             </button>
             <img
-              src={expandedImage.base64_data}
+              src={expandedImage.base64_data || expandedImage.storage_url || ""}
+              onError={async (e) => {
+                const target = e.target as HTMLImageElement;
+                const originalSrc = target.src;
+                
+                console.error(`Failed to load expanded image ${expandedImage.image_id}:`, {
+                  has_base64: !!expandedImage.base64_data && expandedImage.base64_data.length > 100,
+                  has_storage_url: !!expandedImage.storage_url,
+                  storage_url: expandedImage.storage_url,
+                  attempted_src: originalSrc,
+                });
+                
+                // Try to reload from storage
+                if (expandedImage.storage_url && originalSrc === expandedImage.storage_url) {
+                  try {
+                    const response = await fetch(`${expandedImage.storage_url}?t=${Date.now()}`, {
+                      method: 'GET',
+                      mode: 'cors',
+                      cache: 'no-cache',
+                    });
+                    
+                    if (response.ok) {
+                      const blob = await response.blob();
+                      const reader = new FileReader();
+                      reader.onloadend = () => {
+                        const base64 = reader.result as string;
+                        target.src = base64;
+                        // Update the expanded image
+                        setExpandedImage({ ...expandedImage, base64_data: base64 });
+                      };
+                      reader.readAsDataURL(blob);
+                      return;
+                    }
+                  } catch (error) {
+                    console.error(`Error reloading expanded image:`, error);
+                  }
+                }
+                
+                // Show error placeholder
+                target.src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400'%3E%3Crect fill='%23f3f4f6' width='400' height='400'/%3E%3Ctext x='50%25' y='50%25' text-anchor='middle' dy='.3em' fill='%239ca3af' font-family='sans-serif' font-size='16'%3EImage failed to load%3C/text%3E%3C/svg%3E";
+              }}
               alt={expandedImage.description}
               className="w-full h-auto max-h-[70vh] object-contain"
             />

@@ -181,6 +181,12 @@ video_generator/
 # Gemini API (for storyboard and image generation)
 GOOGLE_AI_API_KEY=
 
+# Google Drive API (for image storage)
+# Download OAuth 2.0 credentials from Google Cloud Console
+# Place credentials.json in the backend directory
+GOOGLE_DRIVE_CREDENTIALS_FILE=credentials.json  # Optional: custom path
+GOOGLE_DRIVE_TOKEN_FILE=token.json  # Optional: custom path (auto-generated)
+
 # Video Generation API (Kling AI)
 # New JWT-based authentication (recommended)
 KLING_ACCESS_KEY=
@@ -197,6 +203,10 @@ BACKEND_URL=http://localhost:8000  # Used for Kie.ai callback URL (must be publi
 
 # Kie.ai API (for Nano Banana Pro image generation)
 KIE_AI_API_KEY=  # Get your key at https://kie.ai/nano-banana-pro
+
+# Content Machine Integration (optional)
+# If you have Content Machine running, the frontend can fetch channel information
+# Set VITE_CONTENT_MACHINE_API_URL in frontend/.env.local
 ```
 
 ### Frontend (.env.local in frontend directory)

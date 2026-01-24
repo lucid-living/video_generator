@@ -21,7 +21,7 @@ async def generate_reference_image(
     previous_images: List[dict] = None,
     style_guide_images: List[str] = None,
     use_image_reference: bool = False,
-    reference_image_base64: str = ""
+    reference_images_base64: List[str] = None
 ) -> ReferenceImage:
     """
     Generate a reference image for visual consistency using OpenAI DALL-E API.
@@ -32,6 +32,8 @@ async def generate_reference_image(
         shot_indices: List of shot indices this image applies to
         previous_images: List of previous image descriptions for consistency
         style_guide_images: List of base64 reference images from style guide
+        use_image_reference: Whether to use image references (for Gemini API)
+        reference_images_base64: List of base64 encoded reference images (up to 14 for Gemini API) or single string for backward compatibility
 
     Returns:
         ReferenceImage: Generated image with base64 data
@@ -45,10 +47,38 @@ async def generate_reference_image(
     if style_guide_images is None:
         style_guide_images = []
     
+    # Normalize reference_images_base64 to always be a list
+    if reference_images_base64 is None:
+        reference_images_base64 = []
+    elif isinstance(reference_images_base64, str):
+        # Backward compatibility: convert single string to list
+        reference_images_base64 = [reference_images_base64] if reference_images_base64 else []
+    elif isinstance(reference_images_base64, list):
+        if len(reference_images_base64) > 14:
+            raise ValueError(f"Maximum 14 reference images allowed for Gemini API, got {len(reference_images_base64)}")
+    else:
+        # Unknown type, convert to empty list
+        reference_images_base64 = []
+    
     # Enhance Pixar style guide with more specific references
     enhanced_style_guide = style_guide
+    is_childrens_content = (
+        "children" in style_guide.lower() or 
+        "lullaby" in style_guide.lower() or 
+        "under 2" in style_guide.lower() or 
+        "under 5" in style_guide.lower() or
+        "toddler" in style_guide.lower() or
+        "baby" in style_guide.lower()
+    )
+    is_christian_content = (
+        "christian" in style_guide.lower() or 
+        "biblical" in style_guide.lower() or 
+        "faith" in style_guide.lower() or
+        "values" in style_guide.lower()
+    )
+    
     if "pixar" in style_guide.lower() or "3d animation" in style_guide.lower():
-        enhanced_style_guide = f"""{style_guide}
+        pixar_enhancements = f"""
 
 CRITICAL STYLE REQUIREMENTS - Must match Pixar Animation Studios exactly:
 - Style reference: "Inside Out", "Soul", "Coco", "Up", "Toy Story", "Monsters Inc"
@@ -63,6 +93,39 @@ CRITICAL STYLE REQUIREMENTS - Must match Pixar Animation Studios exactly:
 - Warm, inviting color palette with good contrast between light and shadow
 - Smooth, flowing character poses that suggest movement
 - Characters should have the distinctive Pixar "appeal" - friendly, expressive, charming"""
+        
+        # Add children's content safety guidelines
+        if is_childrens_content:
+            pixar_enhancements += """
+
+CHILDREN'S CONTENT SAFETY & APPROPRIATENESS (Ages 0-5):
+- All content must be age-appropriate for children under 5
+- Calming, soothing visual elements for lullabies (ages 0-2)
+- Soft, gentle movements and transitions
+- No sudden movements, loud colors, or startling elements
+- Characters must be friendly, approachable, and non-threatening
+- Use calming color palettes: soft blues, gentle purples, warm pastels
+- Bedtime/sleep themes: stars, moons, clouds, peaceful landscapes
+- Educational content (ages 2-5): clear, simple visual storytelling
+- Characters should model positive behaviors and emotions
+- Avoid any scary, dark, or intense imagery"""
+        
+        # Add Christian values integration
+        if is_christian_content:
+            pixar_enhancements += """
+
+CHRISTIAN VALUES & CONTENT GUIDELINES:
+- Integrate biblical themes and values naturally into visual storytelling
+- Characters should demonstrate: kindness, love, forgiveness, gratitude, honesty
+- Visual metaphors for faith: light, growth, community, helping others
+- Positive role models showing Christian character traits
+- Age-appropriate biblical stories and parables (Noah's Ark, Good Samaritan, etc.)
+- Inclusive, welcoming visual representation of community and fellowship
+- Nature and creation themes that reflect God's love
+- Avoid any content that contradicts Christian values
+- Focus on love, hope, and positive messages"""
+        
+        enhanced_style_guide = style_guide + pixar_enhancements
     
     # Add reference images context (describe them in the prompt since DALL-E 3 doesn't accept image inputs)
     reference_images_context = ""
@@ -127,9 +190,9 @@ CRITICAL STYLE REQUIREMENTS - Must match Pixar Animation Studios exactly:
     kie_api_key = os.getenv("KIE_AI_API_KEY")
     
     # If image reference is requested, use Nano Banana Pro API via Kie.ai (supports image inputs)
-    if use_image_reference and reference_image_base64:
+    if use_image_reference and reference_images_base64:
         return await _generate_with_nano_banana_pro(
-            prompt, description, shot_indices, reference_image_base64, style_guide
+            prompt, description, shot_indices, reference_images_base64, style_guide
         )
     
     # If Kie.ai API key is available, use Nano Banana Pro even without reference image
@@ -138,7 +201,7 @@ CRITICAL STYLE REQUIREMENTS - Must match Pixar Animation Studios exactly:
         print(f"Using Nano Banana Pro via Kie.ai (no reference image)")
         # Generate without reference image - Nano Banana Pro still provides better quality
         return await _generate_with_nano_banana_pro(
-            prompt, description, shot_indices, "", style_guide
+            prompt, description, shot_indices, [], style_guide
         )
     
     # Fallback to DALL-E 3 if Kie.ai API key is not available
@@ -262,15 +325,15 @@ async def _generate_with_nano_banana_pro(
     prompt: str,
     description: str,
     shot_indices: List[int],
-    reference_image_base64: str,
+    reference_images_base64: List[str],
     style_guide: str = ""
 ) -> ReferenceImage:
     """
     Generate image using Nano Banana Pro API via Kie.ai with image-to-image support.
-    This allows using a previous image as a direct reference for better character consistency.
+    This allows using multiple previous images as direct references for better character consistency.
     
     Nano Banana Pro uses Gemini 3.0 Pro Image and supports:
-    - Up to 8 reference images
+    - Up to 14 reference images (Gemini API limit)
     - 1K, 2K, and 4K resolution
     - Better character consistency than text-only prompts
     
@@ -278,7 +341,7 @@ async def _generate_with_nano_banana_pro(
         prompt: Text prompt for generation
         description: Description of what to generate
         shot_indices: List of shot indices this image applies to
-        reference_image_base64: Base64 encoded reference image (data URI format)
+        reference_images_base64: List of base64 encoded reference images (data URI format), up to 14
         style_guide: Style guide text for additional context
     
     Returns:
@@ -297,14 +360,26 @@ async def _generate_with_nano_banana_pro(
             "Get your key at https://kie.ai/nano-banana-pro"
         )
     
-    # Extract base64 data from data URI if needed
-    if reference_image_base64.startswith("data:image"):
-        # Extract base64 part: data:image/png;base64,<data>
-        reference_image_base64 = reference_image_base64.split(",", 1)[1]
+    # Validate reference images count
+    if len(reference_images_base64) > 14:
+        raise ValueError(f"Maximum 14 reference images allowed for Gemini API, got {len(reference_images_base64)}")
+    
+    # Extract base64 data from data URIs if needed
+    processed_images = []
+    for ref_img in reference_images_base64:
+        if ref_img.startswith("data:image"):
+            # Extract base64 part: data:image/png;base64,<data>
+            processed_images.append(ref_img.split(",", 1)[1])
+        elif ref_img.startswith("http://") or ref_img.startswith("https://"):
+            # Already a URL, use as-is
+            processed_images.append(ref_img)
+        else:
+            # Assume it's already base64 without data URI prefix
+            processed_images.append(ref_img)
     
     print(f"Generating image with Nano Banana Pro (via Kie.ai):")
     print(f"  Prompt length: {len(prompt)} characters")
-    print(f"  Using reference image: {len(reference_image_base64)} chars base64")
+    print(f"  Using {len(processed_images)} reference image(s)")
     print(f"  Resolution: 2K (for better quality)")
     
     # Get callback URL from environment
@@ -332,13 +407,14 @@ async def _generate_with_nano_banana_pro(
     callback_url = f"{backend_url}/api/webhooks/kie-callback"
     
     # Check if callback URL is publicly accessible (not localhost)
-    # If localhost, we'll use polling instead since callbacks won't work
+    # Railway, Render, Fly.io, and other cloud platforms are publicly accessible
     use_callback = not any(host in backend_url.lower() for host in ["localhost", "127.0.0.1", "0.0.0.0"])
     
     if use_callback:
-        print(f"  Using callback URL: {callback_url}")
+        print(f"  ✓ Callback URL is publicly accessible: {callback_url}")
+        print(f"  Using callback mechanism (recommended for production)")
     else:
-        print(f"  WARNING: Callback URL is localhost ({backend_url}). Callbacks won't work.")
+        print(f"  ⚠ WARNING: Callback URL is localhost ({backend_url}). Callbacks won't work.")
         print(f"  Falling back to polling for task status.")
     
     # Get task manager
@@ -357,23 +433,27 @@ async def _generate_with_nano_banana_pro(
             "output_format": "png",  # PNG for better quality
         }
         
-        # Only include image_input if we have a reference image URL
+        # Only include image_input if we have reference images
         # IMPORTANT: Kie.ai API requires URLs, not data URIs or base64
         # If we only have base64, we'll skip image_input and use text-only generation
-        # TODO: Upload base64 image to Supabase Storage first to get a URL
-        if reference_image_base64:
-            # Check if it's already a URL (starts with http:// or https://)
-            if reference_image_base64.startswith("http://") or reference_image_base64.startswith("https://"):
+        # TODO: Upload base64 images to Supabase Storage first to get URLs
+        image_urls = []
+        for ref_img in processed_images:
+            if ref_img.startswith("http://") or ref_img.startswith("https://"):
                 # It's already a URL, use it directly
-                input_payload["image_input"] = [reference_image_base64]
-                print(f"  Using reference image URL: {reference_image_base64[:100]}...")
+                image_urls.append(ref_img)
             else:
                 # It's base64, we can't use it directly with Kie.ai API
-                # Skip image_input and use text-only generation
+                # Skip this image and log a warning
                 print(f"  WARNING: Reference image provided as base64, but Kie.ai API requires URLs.")
-                print(f"  Skipping image_input and using text-only generation.")
-                print(f"  TODO: Upload image to Supabase Storage first to get a URL for image reference.")
-                # Don't include image_input - API will use text prompt only
+                print(f"  Skipping this image. TODO: Upload image to Supabase Storage first to get a URL.")
+        
+        if image_urls:
+            input_payload["image_input"] = image_urls
+            print(f"  Using {len(image_urls)} reference image URL(s)")
+        else:
+            print(f"  WARNING: No valid image URLs found. Using text-only generation.")
+            print(f"  TODO: Upload images to Supabase Storage first to get URLs for image references.")
         
         payload = {
             "model": "nano-banana-pro",
@@ -433,39 +513,63 @@ async def _generate_with_nano_banana_pro(
                     fail_code = result_data.get("failCode") or result_data.get("fail_code") or "Unknown"
                     raise ValueError(f"Image generation failed ({fail_code}): {fail_msg}")
                 else:
-                    # Asynchronous - we have a taskId
-                    task_id = result_data.get("taskId")
+                    # Asynchronous - we have a taskId (or recordId)
+                    task_id = result_data.get("taskId") or result_data.get("recordId")
+                    record_id = result_data.get("recordId")  # Save recordId separately
                     if not task_id:
-                        raise ValueError("Kie.ai API did not return a taskId and no result found in response")
+                        raise ValueError("Kie.ai API did not return a taskId/recordId and no result found in response")
                     
-                    print(f"Task created: {task_id}")
+                    print(f"Task created: {task_id} (taskId: {result_data.get('taskId')}, recordId: {record_id})")
                     
                     if use_callback:
-                        # Use callback mechanism
+                        # Use callback mechanism (recommended for production - Railway is publicly accessible)
                         print(f"Waiting for callback at {callback_url}...")
+                        print(f"  Callbacks should arrive immediately when task completes (per Kie.ai docs)")
                         
                         # Create task tracker and wait for callback
                         task_result = task_manager.create_task(task_id)
                         
                         # Wait for callback (with reasonable timeout, then fallback to polling)
-                        callback_timeout = 300  # 5 minutes - image generation can take time
+                        # Per Kie.ai docs: callbacks arrive immediately when tasks complete
+                        # For Railway/production: callbacks should work, but keep timeout as safety net
+                        # Image generation can take 1-3 minutes, so give callbacks plenty of time
+                        callback_timeout = 180  # 3 minutes - callbacks arrive immediately when done, this is max wait
                         try:
                             # Wait for callback to complete the task
                             print(f"  Waiting up to {callback_timeout}s for callback...")
-                            result_data = await task_result.wait(timeout=callback_timeout)
-                            image_base64 = result_data
-                            print(f"  ✓ Received callback for task {task_id}")
+                            callback_result_data = await task_result.wait(timeout=callback_timeout)
+                            image_base64 = callback_result_data
+                            print(f"  ✓ Received callback for task {task_id} (callback worked!)")
                         except TimeoutError:
-                            print(f"  ⚠ Callback not received after {callback_timeout}s, falling back to polling...")
+                            print(f"  ⚠ Callback not received after {callback_timeout}s")
+                            print(f"  This might indicate:")
+                            print(f"    - Callback URL not accessible from Kie.ai servers")
+                            print(f"    - Network/firewall issues")
+                            print(f"    - Task taking longer than expected")
+                            print(f"  Falling back to polling (reliable fallback)...")
                             # Fall through to polling
                             use_callback = False  # Switch to polling mode
                     
                     if not use_callback:
                         # Use polling mechanism (fallback or primary if localhost)
                         print(f"Polling for results...")
-                        image_base64 = await _poll_for_task_completion(
-                            task_id, api_key, client, max_polls=60, poll_interval=5
-                        )
+                        try:
+                            # Pass recordId if available (createTask returns both taskId and recordId)
+                            image_base64 = await _poll_for_task_completion(
+                                task_id, api_key, client, max_polls=60, poll_interval=5, record_id=record_id
+                            )
+                        except ValueError as e:
+                            # Log detailed error before re-raising
+                            print(f"ERROR: Polling failed with ValueError: {e}")
+                            print(f"  Task ID: {task_id}")
+                            raise e
+                        except Exception as e:
+                            # Log detailed error before re-raising
+                            print(f"ERROR: Polling failed with Exception: {e}")
+                            print(f"  Task ID: {task_id}")
+                            import traceback
+                            print(f"  Traceback: {traceback.format_exc()}")
+                            raise e
                     
             elif response.status_code == 401:
                 raise ValueError("Invalid Kie.ai API key. Please check your KIE_AI_API_KEY.")
@@ -489,7 +593,9 @@ async def _generate_with_nano_banana_pro(
         if 'image_base64' not in locals():
             raise ValueError("Image generation completed but no image data was retrieved")
         
-        image_id = f"nbp_{hash(prompt + (reference_image_base64[:100] if reference_image_base64 else "")) % 1000000}"
+        # Create image_id hash from prompt and reference images
+        ref_images_hash = "".join([img[:50] for img in processed_images[:3]])  # Use first 3 images for hash
+        image_id = f"nbp_{hash(prompt + ref_images_hash) % 1000000}"
         
         return ReferenceImage(
             image_id=image_id,
@@ -517,17 +623,24 @@ async def _poll_for_task_completion(
     api_key: str,
     client: httpx.AsyncClient,
     max_polls: int = 60,
-    poll_interval: int = 5
+    poll_interval: int = 5,
+    record_id: str = None
 ) -> str:
     """
-    Poll Kie.ai API for task completion.
+    Poll Kie.ai API for task completion using the correct endpoint.
+    
+    According to Kie.ai documentation:
+    - Endpoint: GET /api/v1/jobs/recordInfo
+    - Parameter: taskId as query parameter
+    - Polling intervals: 2-3s initially, 5-10s after 30s, 15-30s after 2min
     
     Args:
         task_id: Task identifier
         api_key: Kie.ai API key
         client: HTTP client
-        max_polls: Maximum number of polling attempts
-        poll_interval: Seconds between polls
+        max_polls: Maximum number of polling attempts (default 60 = ~5-10 minutes)
+        poll_interval: Initial seconds between polls (will be adjusted dynamically)
+        record_id: Optional recordId (not used, but kept for compatibility)
     
     Returns:
         str: Base64 encoded image data URI
@@ -536,96 +649,138 @@ async def _poll_for_task_completion(
         ValueError: If polling fails or task fails
         Exception: If timeout exceeded
     """
-    status_url = f"https://api.kie.ai/api/v1/jobs/getTaskDetails"
+    # Correct endpoint according to Kie.ai documentation
+    status_url = "https://api.kie.ai/api/v1/jobs/recordInfo"
+    
+    # Track elapsed time for dynamic polling intervals
+    elapsed_seconds = 0
     
     for poll_count in range(max_polls):
-        await asyncio.sleep(poll_interval)
+        # Calculate dynamic polling interval based on elapsed time
+        # Per Kie.ai best practices:
+        # - First 30 seconds: every 2-3 seconds
+        # - After 30 seconds: every 5-10 seconds  
+        # - After 2 minutes: every 15-30 seconds
+        if elapsed_seconds < 30:
+            current_interval = 3  # 2-3 seconds
+        elif elapsed_seconds < 120:
+            current_interval = 8  # 5-10 seconds
+        else:
+            current_interval = 20  # 15-30 seconds
         
-        # Try different endpoint formats
-        rest_url = f"https://api.kie.ai/api/v1/jobs/{task_id}"
-        status_response = await client.get(
-            rest_url,
-            headers={"Authorization": f"Bearer {api_key}"},
-            timeout=10.0,
-        )
+        # Wait before polling (except first iteration)
+        if poll_count > 0:
+            await asyncio.sleep(current_interval)
+            elapsed_seconds += current_interval
         
-        # If 404, try query parameter format
-        if status_response.status_code == 404:
+        # Make GET request with taskId as query parameter
+        try:
+            print(f"  Poll {poll_count + 1}/{max_polls}: GET {status_url}?taskId={task_id}")
             status_response = await client.get(
                 status_url,
                 params={"taskId": task_id},
                 headers={"Authorization": f"Bearer {api_key}"},
                 timeout=10.0,
             )
-            
-            # If still 404, try snake_case parameter
-            if status_response.status_code == 404:
-                status_response = await client.get(
-                    status_url,
-                    params={"task_id": task_id},
-                    headers={"Authorization": f"Bearer {api_key}"},
-                    timeout=10.0,
-                )
+            print(f"  Response status: {status_response.status_code}")
+        except Exception as e:
+            print(f"  GET request failed: {e}")
+            if poll_count >= 10:  # After 10 failed attempts, give up
+                raise ValueError(f"Failed to connect to Kie.ai API: {e}")
+            continue
         
+        # Handle response according to Kie.ai API structure
         if status_response.status_code == 200:
             try:
-                status_data = status_response.json()
+                response_data = status_response.json()
             except Exception as e:
-                print(f"  Failed to parse status response JSON: {e}")
+                print(f"  Failed to parse response JSON: {e}")
+                print(f"  Response text: {status_response.text[:500]}")
+                if poll_count >= 10:
+                    raise ValueError(f"Failed to parse API response: {e}")
                 continue
             
-            if status_data.get("code") == 200:
-                task_status = status_data.get("data", {})
-                state = task_status.get("state")
-                
-                print(f"  Poll {poll_count + 1}/{max_polls}: State = {state}")
-                
-                if state == "success":
-                    # Task completed successfully
-                    result_json_str = task_status.get("resultJson")
-                    if result_json_str:
-                        try:
-                            result_json = json.loads(result_json_str)
-                            result_urls = result_json.get("resultUrls", [])
-                            
-                            if result_urls and len(result_urls) > 0:
-                                result_url = result_urls[0]
-                                print(f"  Task completed. Result URL: {result_url[:100]}...")
-                                
-                                # Download the image
-                                image_response = await client.get(result_url, timeout=30.0)
-                                if image_response.status_code == 200:
-                                    image_bytes = image_response.content
-                                    image_base64 = base64.b64encode(image_bytes).decode('utf-8')
-                                    image_base64 = f"data:image/png;base64,{image_base64}"
-                                    print(f"  Successfully downloaded and encoded image")
-                                    return image_base64
-                                else:
-                                    raise ValueError(f"Failed to download image: HTTP {image_response.status_code}")
-                            else:
-                                raise ValueError("resultJson contains no resultUrls")
-                        except json.JSONDecodeError as e:
-                            raise ValueError(f"Failed to parse resultJson: {e}")
-                    else:
-                        raise ValueError(f"Task completed but no resultJson field found")
-                elif state == "fail":
-                    fail_msg = task_status.get("failMsg") or task_status.get("fail_msg") or "Task failed"
-                    fail_code = task_status.get("failCode") or task_status.get("fail_code") or "Unknown"
-                    raise ValueError(f"Image generation failed ({fail_code}): {fail_msg}")
-                elif state in ["pending", "processing", "running", "queued"] or state is None:
-                    continue
-                else:
-                    print(f"  Unknown state: {state}, continuing to poll...")
-                    continue
-            else:
-                error_msg = status_data.get("msg") or "Unknown error"
-                error_code = status_data.get("code")
-                if poll_count >= 10:  # After 10 failed attempts, give up
-                    raise ValueError(f"Failed to get task status (code {error_code}): {error_msg}")
+            # Check top-level response code
+            response_code = response_data.get("code")
+            if response_code != 200:
+                error_msg = response_data.get("message") or response_data.get("msg") or "Unknown error"
+                print(f"  Poll {poll_count + 1}/{max_polls}: API returned error code {response_code}: {error_msg}")
+                if poll_count >= 10:
+                    raise ValueError(f"Failed to get task status (code {response_code}): {error_msg}")
                 continue
+            
+            # Extract task data
+            task_status = response_data.get("data", {})
+            state = task_status.get("state")
+            
+            print(f"  Poll {poll_count + 1}/{max_polls}: State = {state}")
+            
+            # Handle different task states per Kie.ai documentation
+            if state == "success":
+                # Task completed successfully - extract result URLs
+                result_json_str = task_status.get("resultJson")
+                if not result_json_str:
+                    raise ValueError("Task completed but no resultJson field found")
+                
+                try:
+                    result_json = json.loads(result_json_str)
+                    # Try both resultUrls and image_urls (different models may use different keys)
+                    result_urls = result_json.get("resultUrls") or result_json.get("image_urls") or []
+                    
+                    if not result_urls or len(result_urls) == 0:
+                        raise ValueError("resultJson contains no resultUrls or image_urls")
+                    
+                    result_url = result_urls[0]
+                    print(f"  Task completed. Result URL: {result_url[:100]}...")
+                    
+                    # Download the image
+                    image_response = await client.get(result_url, timeout=30.0)
+                    if image_response.status_code == 200:
+                        image_bytes = image_response.content
+                        image_base64 = base64.b64encode(image_bytes).decode('utf-8')
+                        image_base64 = f"data:image/png;base64,{image_base64}"
+                        print(f"  ✓ Successfully downloaded and encoded image")
+                        return image_base64
+                    else:
+                        raise ValueError(f"Failed to download image: HTTP {image_response.status_code}")
+                        
+                except json.JSONDecodeError as e:
+                    raise ValueError(f"Failed to parse resultJson: {e}")
+                    
+            elif state == "fail":
+                # Task failed - extract error details
+                fail_msg = task_status.get("failMsg") or task_status.get("fail_msg") or "Task failed"
+                fail_code = task_status.get("failCode") or task_status.get("fail_code") or "Unknown"
+                raise ValueError(f"Image generation failed ({fail_code}): {fail_msg}")
+                
+            elif state in ["waiting", "queuing", "generating", "pending", "processing", "running", "queued"]:
+                # Task still processing - continue polling
+                continue
+                
+            elif state is None:
+                # No state returned - might be still initializing
+                print(f"  No state returned, continuing to poll...")
+                continue
+                
+            else:
+                # Unknown state - log but continue polling
+                print(f"  Unknown state: {state}, continuing to poll...")
+                continue
+                
+        elif status_response.status_code == 404:
+            # Task not found - this shouldn't happen if taskId is correct
+            error_text = status_response.text[:500]
+            print(f"  Poll {poll_count + 1}/{max_polls}: Task not found (404) - {error_text}")
+            if poll_count >= 10:
+                raise ValueError(f"Task not found (404). Verify taskId is correct: {task_id}")
+            continue
+            
         else:
-            if poll_count >= 10:  # After 10 failed attempts, give up
-                raise ValueError(f"Status check failed: HTTP {status_response.status_code}")
+            # Other HTTP errors
+            error_text = status_response.text[:500]
+            print(f"  Poll {poll_count + 1}/{max_polls}: HTTP {status_response.status_code} - {error_text}")
+            if poll_count >= 10:
+                raise ValueError(f"Status check failed: HTTP {status_response.status_code} - {error_text}")
             continue
     
     raise Exception(f"Image generation timed out after {max_polls * poll_interval} seconds")
@@ -651,10 +806,11 @@ async def _extract_image_from_result(result_data: dict, client: httpx.AsyncClien
     
     try:
         result_json = json.loads(result_json_str)
-        result_urls = result_json.get("resultUrls", [])
+        # Try both resultUrls and image_urls (different models may use different keys)
+        result_urls = result_json.get("resultUrls") or result_json.get("image_urls") or []
         
         if not result_urls or len(result_urls) == 0:
-            raise ValueError("resultJson contains no resultUrls")
+            raise ValueError("resultJson contains no resultUrls or image_urls")
         
         result_url = result_urls[0]  # Use first result URL
         print(f"Result URL found: {result_url[:100]}...")
@@ -711,10 +867,11 @@ async def handle_kie_callback(
         
         try:
             result_json = json.loads(result_json_str)
-            result_urls = result_json.get("resultUrls", [])
+            # Try both resultUrls and image_urls (different models may use different keys)
+            result_urls = result_json.get("resultUrls") or result_json.get("image_urls") or []
             
             if not result_urls or len(result_urls) == 0:
-                task_manager.fail_task(task_id, ValueError("resultJson contains no resultUrls"))
+                task_manager.fail_task(task_id, ValueError("resultJson contains no resultUrls or image_urls"))
                 return
             
             # Download the image asynchronously
