@@ -205,21 +205,125 @@ async def suno_callback(request: Request, payload: Optional[SunoCallbackPayload]
         
         logger.info(f"Suno callback: type={callback_type}, task_id={task_id}, tracks={len(tracks_data)}")
         
-        # Process tracks (usually 2 variations are generated)
-        for track in tracks_data:
-            audio_id = track.get("id")
-            audio_url = track.get("audio_url")
-            duration = track.get("duration", 0.0)
-            prompt = track.get("prompt", "")
-            title = track.get("title", "")
+        # Only process "complete" callbacks (all tracks ready)
+        # "text" and "first" callbacks are intermediate stages
+        if callback_type != "complete":
+            logger.info(f"Skipping intermediate callback type: {callback_type}")
+            return {
+                "status": "success",
+                "message": f"Intermediate callback received ({callback_type})",
+                "callbackType": callback_type,
+                "task_id": task_id,
+            }
+        
+        if not tracks_data or len(tracks_data) == 0:
+            logger.warning("Suno callback has no tracks data")
+            return {
+                "status": "error",
+                "message": "No tracks in callback data"
+            }
+        
+        # Use the first track (or best track) for the workflow
+        # Usually 2 variations are generated, we'll use the first one
+        first_track = tracks_data[0]
+        audio_id = first_track.get("id")
+        audio_url = first_track.get("audio_url")
+        stream_audio_url = first_track.get("stream_audio_url")
+        duration = first_track.get("duration", 0.0)
+        prompt = first_track.get("prompt", "")
+        title = first_track.get("title", "")
+        
+        logger.info(f"Generated track: {title} ({audio_id}) - {audio_url}")
+        
+        # Update workflow with the generated audio
+        try:
+            import os
+            from supabase import create_client, Client
             
-            logger.info(f"Generated track: {title} ({audio_id}) - {audio_url}")
+            supabase_url = os.getenv("SUPABASE_URL")
+            supabase_key = os.getenv("SUPABASE_ANON_KEY")
             
-            # TODO: Store the audio asset in the workflow
-            # For now, we just log it. In a full implementation, you'd:
-            # 1. Look up the workflow by task_id
-            # 2. Update the workflow's audio_asset with the generated audio
-            # 3. Save the workflow back to the database
+            if not supabase_url or not supabase_key:
+                logger.error("Supabase not configured - cannot update workflow")
+                return {
+                    "status": "error",
+                    "message": "Supabase not configured"
+                }
+            
+            supabase: Client = create_client(supabase_url, supabase_key)
+            
+            # Find workflow(s) with this task_id in audio_asset.file_url
+            # The file_url format is "task://{task_id}"
+            task_url = f"task://{task_id}"
+            
+            logger.info(f"Searching for workflows with audio_asset.file_url = {task_url}")
+            
+            # Query workflows where audio_asset->>'file_url' matches our task URL
+            response = supabase.table("video_workflows").select("*").execute()
+            
+            matching_workflows = []
+            for workflow in response.data:
+                audio_asset = workflow.get("audio_asset")
+                if audio_asset and isinstance(audio_asset, dict):
+                    file_url = audio_asset.get("file_url", "")
+                    if file_url == task_url:
+                        matching_workflows.append(workflow)
+            
+            if not matching_workflows:
+                logger.warning(f"No workflow found with task_id {task_id}")
+                # Still return success - callback was received correctly
+                return {
+                    "status": "success",
+                    "message": "Callback processed but no matching workflow found",
+                    "task_id": task_id,
+                    "note": "Workflow may have been deleted or task_id doesn't match"
+                }
+            
+            # Update all matching workflows (should usually be just one)
+            updated_count = 0
+            for workflow in matching_workflows:
+                workflow_id = workflow.get("workflow_id")
+                logger.info(f"Updating workflow {workflow_id} with generated audio")
+                
+                # Create updated audio_asset
+                updated_audio_asset = {
+                    "audio_id": audio_id or f"suno_{task_id}",
+                    "file_url": audio_url or stream_audio_url or "",
+                    "duration_seconds": float(duration),
+                    "lyrics": prompt or workflow.get("audio_asset", {}).get("lyrics", ""),
+                }
+                
+                # Update the workflow
+                update_response = supabase.table("video_workflows").update({
+                    "audio_asset": updated_audio_asset
+                }).eq("workflow_id", workflow_id).execute()
+                
+                if update_response.data:
+                    updated_count += 1
+                    logger.info(f"Successfully updated workflow {workflow_id}")
+                else:
+                    logger.warning(f"Failed to update workflow {workflow_id}")
+            
+            logger.info(f"Updated {updated_count} workflow(s) with generated audio")
+            
+            return {
+                "status": "success",
+                "message": "Callback processed and workflow updated",
+                "callbackType": callback_type,
+                "task_id": task_id,
+                "tracks_count": len(tracks_data),
+                "workflows_updated": updated_count
+            }
+            
+        except Exception as e:
+            logger.error(f"Error updating workflow: {e}", exc_info=True)
+            # Still return success to acknowledge callback receipt
+            # Don't want Kie.ai to retry the callback
+            return {
+                "status": "error",
+                "message": f"Callback received but workflow update failed: {str(e)}",
+                "task_id": task_id
+            }
         
         return {
             "status": "success",
