@@ -28,6 +28,7 @@ export function SunoMusicGenerator({
   const [taskId, setTaskId] = useState<string | null>(null);
   const [useApi, setUseApi] = useState(true); // Toggle between API and manual
   const pollCountRef = useRef<number>(0); // Use ref to persist poll count across renders
+  const previousTaskIdRef = useRef<string | null>(null); // Track previous taskId to detect changes
 
   // Generate Suno URL with lyrics
   const getSunoUrl = () => {
@@ -40,16 +41,27 @@ export function SunoMusicGenerator({
   // Poll for task status if we have a task ID
   useEffect(() => {
     if (!taskId || !useApi) {
-      pollCountRef.current = 0; // Reset when taskId is cleared
+      // Only reset if we're actually clearing the task
+      if (taskId === null) {
+        pollCountRef.current = 0;
+        previousTaskIdRef.current = null;
+      }
       return;
     }
     
-    // Reset poll count when new task starts
-    pollCountRef.current = 0;
+    // Only reset poll count when taskId actually changes (new task started)
+    if (previousTaskIdRef.current !== taskId) {
+      pollCountRef.current = 0;
+      previousTaskIdRef.current = taskId;
+    }
+    
     const maxPolls = 60; // Stop polling after 5 minutes (60 * 5 seconds)
     
     const pollInterval = setInterval(async () => {
-      pollCountRef.current++;
+      // Only increment if we're still polling the same task
+      if (previousTaskIdRef.current === taskId) {
+        pollCountRef.current++;
+      }
       const currentCount = pollCountRef.current;
       
       // Stop polling after max attempts
@@ -83,6 +95,7 @@ export function SunoMusicGenerator({
               setGenerationStatus("Generation complete!");
               clearInterval(pollInterval);
               pollCountRef.current = 0; // Reset for next time
+              previousTaskIdRef.current = null;
               return;
             }
           }
@@ -106,7 +119,7 @@ export function SunoMusicGenerator({
       clearInterval(pollInterval);
       // Don't reset pollCountRef here - let it persist if taskId changes
     };
-  }, [taskId, useApi, lyrics, onMusicGenerated]);
+  }, [taskId, useApi]); // Removed lyrics and onMusicGenerated from dependencies to prevent unnecessary resets
 
   const handleOpenSuno = () => {
     const url = getSunoUrl();
