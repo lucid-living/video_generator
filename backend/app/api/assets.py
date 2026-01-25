@@ -318,7 +318,19 @@ async def upload_image_to_google_drive(request: GoogleDriveUploadRequest) -> dic
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Google Drive upload failed: {str(e)}")
+        import traceback
+        error_trace = traceback.format_exc()
+        error_msg = str(e)
+        print(f"Google Drive upload error: {error_msg}")
+        print(f"Traceback: {error_trace}")
+        
+        # Provide more helpful error messages
+        if "credentials" in error_msg.lower() or "token" in error_msg.lower():
+            error_msg = f"Google Drive authentication failed: {error_msg}. Please check your Google Drive credentials configuration."
+        elif "not found" in error_msg.lower():
+            error_msg = f"Google Drive credentials file not found: {error_msg}. Please set up Google Drive integration."
+        
+        raise HTTPException(status_code=500, detail=f"Google Drive upload failed: {error_msg}")
 
 
 @router.delete("/delete-from-drive")
