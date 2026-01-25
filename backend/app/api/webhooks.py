@@ -238,7 +238,14 @@ async def suno_callback(request: Request, payload: Optional[SunoCallbackPayload]
         # Update workflow with the generated audio
         try:
             import os
-            from supabase import create_client, Client
+            try:
+                from supabase import create_client, Client
+            except ImportError as e:
+                logger.error(f"Supabase package not installed: {e}")
+                return {
+                    "status": "error",
+                    "message": "Supabase package not installed"
+                }
             
             supabase_url = os.getenv("SUPABASE_URL")
             supabase_key = os.getenv("SUPABASE_ANON_KEY")
@@ -324,14 +331,6 @@ async def suno_callback(request: Request, payload: Optional[SunoCallbackPayload]
                 "message": f"Callback received but workflow update failed: {str(e)}",
                 "task_id": task_id
             }
-        
-        return {
-            "status": "success",
-            "message": "Callback processed",
-            "callbackType": callback_type,
-            "task_id": task_id,
-            "tracks_count": len(tracks_data)
-        }
         
     except HTTPException:
         raise
