@@ -497,6 +497,18 @@ async def _generate_with_nano_banana_pro(
             print(f"Response status: {response.status_code}")
             print(f"Response content-type: {response.headers.get('content-type', 'unknown')}")
             
+            if response.status_code == 400:
+                # Handle 400 Bad Request - usually means invalid parameters
+                error_text = response.text
+                try:
+                    error_data = response.json()
+                    error_msg = error_data.get("msg") or error_data.get("message") or str(error_data)
+                    print(f"Kie.ai 400 Error Details: {error_msg}")
+                    raise ValueError(f"Kie.ai API rejected the request: {error_msg}. If you're using reference images, ensure they are publicly accessible URLs (not base64). Save images to Style Guide first to get URLs.")
+                except:
+                    print(f"Kie.ai 400 Error (unparseable): {error_text}")
+                    raise ValueError(f"Kie.ai API rejected the request (400 Bad Request). This may happen if reference images are provided as base64 instead of URLs. Error: {error_text[:200]}")
+            
             if response.status_code == 200:
                 task_data = response.json()
                 print(f"Full createTask response: {task_data}")
