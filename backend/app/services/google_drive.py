@@ -26,6 +26,10 @@ def _get_google_drive_service():
     """
     Initialize and return Google Drive service.
     
+    Supports both:
+    1. credentials.json file (traditional OAuth flow)
+    2. Environment variables (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET) for serverless deployments
+    
     Returns:
         Resource: Google Drive API service instance
         
@@ -36,6 +40,10 @@ def _get_google_drive_service():
     token_file = os.getenv("GOOGLE_DRIVE_TOKEN_FILE", "token.json")
     credentials_file = os.getenv("GOOGLE_DRIVE_CREDENTIALS_FILE", "credentials.json")
     
+    # Check for environment variable credentials (for serverless/cloud deployments)
+    client_id = os.getenv("GOOGLE_CLIENT_ID")
+    client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
+    
     # Load existing token if available
     if os.path.exists(token_file):
         creds = Credentials.from_authorized_user_file(token_file, SCOPES)
@@ -45,17 +53,53 @@ def _get_google_drive_service():
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            if not os.path.exists(credentials_file):
+            # Try environment variables first (for cloud deployments)
+            if client_id and client_secret:
+                # Create credentials dict from environment variables
+                client_config = {
+                    "installed": {
+                        "client_id": client_id,
+                        "client_secret": client_secret,
+                        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                        "token_uri": "https://oauth2.googleapis.com/token",
+                        "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+                        "redirect_uris": ["http://localhost"]
+                    }
+                }
+                flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
+                # For serverless, we can't use run_local_server - need to use service account or pre-authorized token
+                # For now, try to use existing token or raise helpful error
+                if not os.path.exists(token_file):
+                    raise ValueError(
+                        "Google Drive authentication requires initial setup. "
+                        "For serverless deployments, you need to: "
+                        "1. Run authentication locally once to generate token.json, OR "
+                        "2. Use a service account with credentials.json file. "
+                        "See GOOGLE_DRIVE_SETUP.md for details."
+                    )
+                # If token exists but is invalid, we can't refresh without user interaction
+                # This is a limitation of OAuth2 for serverless
                 raise ValueError(
-                    f"Google Drive credentials file '{credentials_file}' not found. "
-                    "Please download OAuth 2.0 credentials from Google Cloud Console."
+                    "Google Drive token expired and cannot be refreshed automatically. "
+                    "Please re-authenticate locally or use a service account."
                 )
-            flow = InstalledAppFlow.from_client_secrets_file(credentials_file, SCOPES)
-            creds = flow.run_local_server(port=0)
+            elif os.path.exists(credentials_file):
+                # Use credentials file (traditional method)
+                flow = InstalledAppFlow.from_client_secrets_file(credentials_file, SCOPES)
+                creds = flow.run_local_server(port=0)
+            else:
+                raise ValueError(
+                    f"Google Drive credentials not found. "
+                    "Please provide either: "
+                    "1. credentials.json file in backend/ directory, OR "
+                    "2. GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET environment variables. "
+                    "See GOOGLE_DRIVE_SETUP.md for setup instructions."
+                )
         
-        # Save credentials for next run
-        with open(token_file, 'w') as token:
-            token.write(creds.to_json())
+        # Save credentials for next run (if we got new ones)
+        if creds:
+            with open(token_file, 'w') as token:
+                token.write(creds.to_json())
     
     return build('drive', 'v3', credentials=creds)
 
