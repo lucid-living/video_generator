@@ -452,8 +452,14 @@ async def _generate_with_nano_banana_pro(
             input_payload["image_input"] = image_urls
             print(f"  Using {len(image_urls)} reference image URL(s)")
         else:
-            print(f"  WARNING: No valid image URLs found. Using text-only generation.")
-            print(f"  TODO: Upload images to Supabase Storage first to get URLs for image references.")
+            # If use_image_reference was requested but we have no valid URLs, 
+            # we should still proceed with text-only generation rather than failing
+            # The prompt will include style information from previous images
+            print(f"  WARNING: No valid image URLs found in reference images.")
+            print(f"  Reference images provided as base64, but Kie.ai API requires publicly accessible URLs.")
+            print(f"  Falling back to text-only generation with enhanced prompt.")
+            print(f"  TIP: Save images to Style Guide first to get URLs, or ensure images have storage_url set.")
+            # Don't include image_input in payload - use text-only generation
         
         payload = {
             "model": "nano-banana-pro",
