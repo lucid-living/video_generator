@@ -58,9 +58,38 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["*"],
+    expose_headers=["*"],
+    max_age=3600,
 )
+
+
+class CORSPreflightMiddleware(BaseHTTPMiddleware):
+    """
+    Middleware to explicitly handle OPTIONS preflight requests and ensure CORS headers are set.
+    This runs before CORSMiddleware to catch OPTIONS requests.
+    """
+    async def dispatch(self, request: Request, call_next):
+        # Handle OPTIONS preflight requests explicitly
+        if request.method == "OPTIONS":
+            origin = request.headers.get("origin")
+            if origin and origin in cors_origins:
+                print(f"CORS Preflight: Handling OPTIONS request from {origin}")
+                response = JSONResponse(
+                    status_code=200,
+                    content={}
+                )
+                response.headers["Access-Control-Allow-Origin"] = origin
+                response.headers["Access-Control-Allow-Credentials"] = "true"
+                response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
+                response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With"
+                response.headers["Access-Control-Max-Age"] = "3600"
+                return response
+            elif origin:
+                print(f"CORS Preflight: WARNING - Origin {origin} not allowed for OPTIONS request")
+        
+        return await call_next(request)
 
 
 class CORSDebugMiddleware(BaseHTTPMiddleware):
@@ -80,6 +109,8 @@ class CORSDebugMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+# Add CORS preflight middleware first (runs last, so handles OPTIONS before other middleware)
+app.add_middleware(CORSPreflightMiddleware)
 # Add CORS debug middleware (always enabled to help debug CORS issues)
 app.add_middleware(CORSDebugMiddleware)
 
