@@ -307,6 +307,28 @@ async def upload_image_to_storage_endpoint(request: ImageUploadRequest) -> dict:
     Raises:
         HTTPException: If upload fails
     """
+    # Validate request data before processing
+    if not request.image_data_base64 or len(request.image_data_base64.strip()) == 0:
+        raise HTTPException(
+            status_code=400, 
+            detail="image_data_base64 is required and cannot be empty"
+        )
+    if not request.image_id or len(request.image_id.strip()) == 0:
+        raise HTTPException(
+            status_code=400,
+            detail="image_id is required and cannot be empty"
+        )
+    if not request.workflow_id or len(request.workflow_id.strip()) == 0:
+        raise HTTPException(
+            status_code=400,
+            detail="workflow_id is required and cannot be empty"
+        )
+    
+    # Log request details for debugging (without logging full base64 data)
+    print(f"📤 Upload request: image_id={request.image_id}, workflow_id={request.workflow_id}, "
+          f"image_data_length={len(request.image_data_base64)}, "
+          f"description_length={len(request.description) if request.description else 0}")
+    
     try:
         url = await upload_image_to_storage(
             request.image_data_base64,
@@ -314,14 +336,17 @@ async def upload_image_to_storage_endpoint(request: ImageUploadRequest) -> dict:
             request.workflow_id,
             request.description
         )
+        print(f"✅ Successfully uploaded image {request.image_id} to storage: {url}")
         return {"url": url}
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        error_msg = str(e)
+        print(f"❌ Validation error uploading image {request.image_id}: {error_msg}")
+        raise HTTPException(status_code=400, detail=error_msg)
     except Exception as e:
         import traceback
         error_trace = traceback.format_exc()
         error_msg = str(e)
-        print(f"Supabase Storage upload error: {error_msg}")
+        print(f"❌ Supabase Storage upload error for image {request.image_id}: {error_msg}")
         print(f"Traceback: {error_trace}")
         
         # Provide more helpful error messages
@@ -332,11 +357,23 @@ async def upload_image_to_storage_endpoint(request: ImageUploadRequest) -> dict:
             )
         elif "credentials" in error_msg.lower() or "not configured" in error_msg.lower():
             error_msg = (
-                f"Supabase credentials not configured: {error_msg}. "
-                f"Please set SUPABASE_URL and SUPABASE_ANON_KEY environment variables."
+                f"Supabase credentials not configured. "
+                f"Please set SUPABASE_URL and SUPABASE_ANON_KEY environment variables in Railway."
+            )
+        elif "invalid base64" in error_msg.lower():
+            error_msg = (
+                f"Invalid image data format: {error_msg}. "
+                f"Expected base64-encoded image data (data URI format: 'data:image/png;base64,...')"
             )
         
-        raise HTTPException(status_code=500, detail=f"Supabase Storage upload failed: {error_msg}")
+        # Use 500 for server errors, 400 for client errors
+        status_code = 500
+        if "credentials" in error_msg.lower() or "bucket" in error_msg.lower():
+            status_code = 500  # Server configuration issue
+        elif "invalid" in error_msg.lower() or "required" in error_msg.lower():
+            status_code = 400  # Client data issue
+        
+        raise HTTPException(status_code=status_code, detail=f"Supabase Storage upload failed: {error_msg}")
 
 
 @router.delete("/delete-image")
