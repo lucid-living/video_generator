@@ -10,6 +10,22 @@ import httpx
 import json
 from app.models.workflow import ReferenceImage
 from app.services.task_manager import get_task_manager
+from dotenv import load_dotenv
+from pathlib import Path
+
+# Ensure environment variables from project root .env files are loaded,
+# in case this service is imported before app.main runs or in isolation.
+root_dir = Path(__file__).parent.parent.parent  # backend/app/services -> project root
+env_local = root_dir / ".env.local"
+env_file = root_dir / ".env"
+backend_env = root_dir / "backend" / ".env"
+
+if env_local.exists():
+    load_dotenv(env_local)
+elif env_file.exists():
+    load_dotenv(env_file)
+elif backend_env.exists():
+    load_dotenv(backend_env)
 
 
 
@@ -187,6 +203,7 @@ CHRISTIAN VALUES & CONTENT GUIDELINES:
         print(f"Warning: Prompt truncated to 4000 characters (preserved storyboard prompt)")
     
     # Check if Kie.ai API key is available - prefer Nano Banana Pro for better quality
+    # Use a single canonical env var for simplicity
     kie_api_key = os.getenv("KIE_AI_API_KEY")
     
     # If image reference is requested, use Nano Banana Pro API via Kie.ai (supports image inputs)
@@ -351,7 +368,7 @@ async def _generate_with_nano_banana_pro(
         ValueError: If API key is missing or generation fails
         Exception: If API call fails
     """
-    # Get Kie.ai API key
+    # Get Kie.ai API key (single canonical name)
     api_key = os.getenv("KIE_AI_API_KEY")
     if not api_key:
         raise ValueError(
@@ -367,15 +384,31 @@ async def _generate_with_nano_banana_pro(
     # Extract base64 data from data URIs if needed
     processed_images = []
     for ref_img in reference_images_base64:
+        # Skip empty or invalid reference images
+        if not ref_img or not isinstance(ref_img, str) or len(ref_img.strip()) == 0:
+            print(f"  Warning: Skipping empty/invalid reference image")
+            continue
+            
         if ref_img.startswith("data:image"):
             # Extract base64 part: data:image/png;base64,<data>
-            processed_images.append(ref_img.split(",", 1)[1])
+            base64_part = ref_img.split(",", 1)[1] if "," in ref_img else ref_img
+            if base64_part and len(base64_part) > 50:  # Validate minimum length
+                processed_images.append(base64_part)
+            else:
+                print(f"  Warning: Skipping invalid base64 data URI (too short)")
         elif ref_img.startswith("http://") or ref_img.startswith("https://"):
             # Already a URL, use as-is
             processed_images.append(ref_img)
         else:
             # Assume it's already base64 without data URI prefix
-            processed_images.append(ref_img)
+            if len(ref_img) > 50:  # Validate minimum length for base64
+                processed_images.append(ref_img)
+            else:
+                print(f"  Warning: Skipping invalid base64 string (too short: {len(ref_img)} chars)")
+    
+    # Validate we have at least some valid reference images if the list was non-empty
+    if len(reference_images_base64) > 0 and len(processed_images) == 0:
+        raise ValueError("All reference images provided were invalid or empty. Please provide valid base64 data or URLs.")
     
     print(f"Generating image with Nano Banana Pro (via Kie.ai):")
     print(f"  Prompt length: {len(prompt)} characters")

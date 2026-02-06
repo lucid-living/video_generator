@@ -1,19 +1,19 @@
 /**
- * Service for storing reference images in Google Drive.
- * Images are stored in project-specific folders in Google Drive.
- * Each workflow/project gets its own folder: "AI Music Video Generator Projects/Workflow_{workflow_id}/"
+ * Service for storing reference images in Supabase Storage.
+ * Images are stored in workflow-specific folders in Supabase Storage.
+ * Each workflow/project gets its own folder: {workflow_id}/{image_id}.png
  */
 
-import { uploadImageToGoogleDrive, deleteImageFromGoogleDrive } from "./api";
+import { uploadImageToStorage, deleteImageFromStorage } from "./api";
 
 /**
- * Upload a reference image to Google Drive.
+ * Upload a reference image to Supabase Storage.
  * 
  * @param imageData Base64 data URI of the image
  * @param imageId Unique identifier for the image
  * @param description Description of the image
- * @param workflowId Workflow/project identifier (required for Google Drive organization)
- * @returns Public shareable URL of the uploaded image
+ * @param workflowId Workflow/project identifier (required for storage organization)
+ * @returns Public URL of the uploaded image
  */
 export async function uploadReferenceImage(
   imageData: string,
@@ -23,10 +23,10 @@ export async function uploadReferenceImage(
 ): Promise<string> {
   try {
     if (!workflowId) {
-      throw new Error("workflowId is required for Google Drive upload");
+      throw new Error("workflowId is required for Supabase Storage upload");
     }
     
-    const url = await uploadImageToGoogleDrive(
+    const url = await uploadImageToStorage(
       imageData,
       imageId,
       workflowId,
@@ -35,32 +35,32 @@ export async function uploadReferenceImage(
     
     return url;
   } catch (error) {
-    console.error("Error uploading reference image to Google Drive:", error);
+    console.error("Error uploading reference image to Supabase Storage:", error);
     throw error;
   }
 }
 
 /**
- * Delete a reference image from Google Drive.
+ * Delete a reference image from Supabase Storage.
  * 
- * @param storageUrl Google Drive file URL or file ID
+ * @param storageUrl Supabase Storage URL of the image
  */
 export async function deleteReferenceImage(storageUrl: string): Promise<void> {
   try {
-    await deleteImageFromGoogleDrive(storageUrl);
+    await deleteImageFromStorage(storageUrl);
   } catch (error) {
-    console.error("Error deleting reference image from Google Drive:", error);
+    console.error("Error deleting reference image from Supabase Storage:", error);
     throw error;
   }
 }
 
 /**
- * Check if Google Drive is configured.
- * Note: This is a placeholder - actual check happens on backend.
+ * Check if Supabase Storage bucket is configured.
+ * Note: Actual check happens on backend, but this ensures the bucket exists.
  */
 export async function ensureStorageBucket(): Promise<void> {
-  // Google Drive setup is handled on the backend
-  // This function exists for compatibility
-  console.log("Google Drive storage is configured on the backend");
+  // Supabase Storage bucket setup is handled on the backend
+  // The bucket 'reference-images' should be created in Supabase dashboard with public access
+  console.log("Supabase Storage is configured on the backend");
 }
 

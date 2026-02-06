@@ -28,44 +28,33 @@ export const supabase = createClient(supabaseUrl || "", supabaseAnonKey || "");
  */
 export async function saveWorkflow(workflow: WorkflowState): Promise<void> {
   try {
-    // Strip base64_data from reference_images before saving to prevent database timeouts
-    // Large base64 strings can cause PostgreSQL statement timeouts (error 57014)
+    /**
+     * CRITICAL SIZE FIX:
+     * ------------------
+     * Supabase was timing out (error 57014) because we were sending very large
+     * JSON payloads that still contained base64 image data.
+     *
+     * For persistence we only need lightweight metadata + storage URLs.
+     * The actual base64 image data is only required in the in‑memory app state.
+     *
+     * So for database writes we ALWAYS strip base64_data completely.
+     * If an image has not been uploaded to storage yet, it will still be present
+     * in the in‑memory workflow, but the persisted version will just contain
+     * metadata (image_id, description, etc.).
+     */
     const referenceImagesForDatabase = workflow.reference_images.map((img) => {
-      // CRITICAL: Never save images without both storage_url AND base64_data
-      // If we have a storage_url, we can safely remove base64_data
-      if (img.storage_url) {
-        return {
-          ...img,
-          base64_data: "", // Remove base64_data when storage_url exists
-        };
-      } else {
-        // If no storage_url, we MUST keep base64_data or the image will be lost
-        if (!img.base64_data || img.base64_data.length < 100) {
-          console.error(
-            `CRITICAL: Image ${img.image_id} has no storage_url and no valid base64_data. ` +
-            `This image cannot be displayed. Skipping save for this image.`
-          );
-          // Return null to filter out - we can't save images we can't display
-          return null;
-        }
-        
-        // If base64_data is very large (>500KB), warn but still save it
-        // Better to have slow saves than lost images
-        if (img.base64_data.length > 500000) {
-          console.warn(
-            `Image ${img.image_id} has no storage_url and very large base64_data (${Math.round(img.base64_data.length / 1000)}KB). ` +
-            `This may cause database timeouts. Consider uploading to storage first.`
-          );
-        }
-        
-        // Keep base64_data - it's the only way to display this image
-        return img;
-      }
-    }).filter((img): img is NonNullable<typeof img> => img !== null); // Remove null entries
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { base64_data: _ignored, ...rest } = img;
+      return {
+        ...rest,
+        base64_data: "", // Explicitly clear base64_data for storage
+      };
+    });
 
-    // Log the size of data being saved for debugging
     const dataSize = JSON.stringify(referenceImagesForDatabase).length;
-    console.log(`Saving workflow ${workflow.workflow_id} with ${referenceImagesForDatabase.length} images (${dataSize} bytes)`);
+    console.log(
+      `Saving workflow ${workflow.workflow_id} with ${referenceImagesForDatabase.length} images (${dataSize} bytes, base64 stripped for DB)`
+    );
 
     const { error } = await supabase
       .from("video_workflows")

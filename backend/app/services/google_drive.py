@@ -67,22 +67,22 @@ def _get_google_drive_service():
                     }
                 }
                 flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
-                # For serverless, we can't use run_local_server - need to use service account or pre-authorized token
-                # For now, try to use existing token or raise helpful error
-                if not os.path.exists(token_file):
-                    raise ValueError(
-                        "Google Drive authentication requires initial setup. "
-                        "For serverless deployments, you need to: "
-                        "1. Run authentication locally once to generate token.json, OR "
-                        "2. Use a service account with credentials.json file. "
-                        "See GOOGLE_DRIVE_SETUP.md for details."
-                    )
-                # If token exists but is invalid, we can't refresh without user interaction
-                # This is a limitation of OAuth2 for serverless
-                raise ValueError(
-                    "Google Drive token expired and cannot be refreshed automatically. "
-                    "Please re-authenticate locally or use a service account."
-                )
+                # Try to authenticate - this will open a browser for first-time setup
+                # For local development, this works fine
+                # For serverless, user needs to do this once locally to get token.json
+                try:
+                    creds = flow.run_local_server(port=0)
+                except Exception as e:
+                    # If run_local_server fails (e.g., in serverless), provide helpful error
+                    if not os.path.exists(token_file):
+                        raise ValueError(
+                            f"Google Drive authentication failed: {str(e)}\n"
+                            "For first-time setup, you need to authenticate interactively. "
+                            "This requires running locally (not in serverless environment). "
+                            "After authentication, token.json will be created and can be uploaded to your deployment. "
+                            "See GOOGLE_DRIVE_SETUP.md for details."
+                        )
+                    raise
             elif os.path.exists(credentials_file):
                 # Use credentials file (traditional method)
                 flow = InstalledAppFlow.from_client_secrets_file(credentials_file, SCOPES)

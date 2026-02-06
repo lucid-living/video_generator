@@ -42,103 +42,35 @@ export function ReferenceImageGenerator({
     if (workflow.reference_images && workflow.reference_images.length > 0) {
       console.log(`Loading ${workflow.reference_images.length} images from workflow ${workflow.workflow_id}`);
       
-      // Load images from storage URLs if base64_data is missing
-      const loadImagesFromStorage = async () => {
-        try {
-          const imagesWithData = await Promise.all(
-            workflow.reference_images.map(async (img, index) => {
-              console.log(`Image ${index + 1}/${workflow.reference_images.length}:`, {
-                image_id: img.image_id,
-                has_base64: !!img.base64_data,
-                has_storage_url: !!img.storage_url,
-                storage_url: img.storage_url,
-                approved: img.approved,
-              });
-              
-              // If we already have base64_data, use it
-              if (img.base64_data && img.base64_data.length > 100) {
-                console.log(`Image ${img.image_id} already has base64_data, using it`);
-                return img;
-              }
-              
-              // If we have storage_url but no base64_data, try to load from storage
-              if (img.storage_url) {
-                try {
-                  console.log(`Loading image ${img.image_id} from storage: ${img.storage_url}`);
-                  const response = await fetch(img.storage_url, {
-                    method: 'GET',
-                    mode: 'cors',
-                  });
-                  
-                  if (response.ok) {
-                    const blob = await response.blob();
-                    const reader = new FileReader();
-                    return new Promise<ReferenceImage>((resolve) => {
-                      reader.onloadend = () => {
-                        const base64 = reader.result as string;
-                        console.log(`Successfully loaded image ${img.image_id} from storage`);
-                        resolve({
-                          ...img,
-                          base64_data: base64,
-                        });
-                      };
-                      reader.onerror = (error) => {
-                        console.warn(`Failed to read image blob from ${img.storage_url}:`, error);
-                        // Return image with storage_url - browser can display it directly
-                        resolve(img);
-                      };
-                      reader.readAsDataURL(blob);
-                    });
-                  } else {
-                    console.warn(`Failed to fetch image from storage ${img.storage_url}: ${response.status} ${response.statusText}`);
-                    // Return image with storage_url - browser might still be able to display it
-                    return img;
-                  }
-                } catch (error) {
-                  console.warn(`Failed to load image from storage ${img.storage_url}:`, error);
-                  // Return image with storage_url - browser might still be able to display it
-                  return img;
-                }
-              }
-              
-              // No storage_url and no base64_data - this is a broken image
-              if (!img.base64_data || img.base64_data.length < 100) {
-                console.error(
-                  `CRITICAL: Image ${img.image_id} has no base64_data and no storage_url - cannot display. ` +
-                  `This image was saved incorrectly. Please regenerate it.`
-                );
-                // Set error to alert user
-                setError(
-                  `Warning: Some images cannot be displayed (missing data). ` +
-                  `Please regenerate images for shots: ${img.shot_indices.join(", ")}`
-                );
-              }
-              
-              return img;
-            })
+      // Use images directly - browsers can display storage_urls natively without base64 conversion
+      // This saves egress bandwidth by not downloading and converting images unnecessarily
+      const images = workflow.reference_images.map((img) => {
+        // Validate that image has either storage_url or base64_data for display
+        if (!img.storage_url && (!img.base64_data || img.base64_data.length < 100)) {
+          console.warn(
+            `Image ${img.image_id} has no storage_url and no base64_data - may not display correctly. ` +
+            `Please regenerate this image.`
           );
-          
-          // Sort images to prioritize approved ones and ensure consistent ordering
-          // Approved images first, then by image_id for consistency
-          const sortedImages = imagesWithData.sort((a, b) => {
-            // Approved images come first
-            if (a.approved && !b.approved) return -1;
-            if (!a.approved && b.approved) return 1;
-            // Then sort by image_id for consistency
-            return a.image_id.localeCompare(b.image_id);
-          });
-          
-          console.log(`Loaded ${sortedImages.length} images, setting state`);
-          setGeneratedImages(sortedImages);
-        } catch (error) {
-          console.error("Failed to load images from storage:", error);
-          // Fallback: use images as-is from workflow (they might have storage_urls that browser can display)
-          console.log("Falling back to workflow images as-is");
-          setGeneratedImages(workflow.reference_images);
+          setError(
+            `Warning: Some images cannot be displayed (missing data). ` +
+            `Please regenerate images for shots: ${img.shot_indices.join(", ")}`
+          );
         }
-      };
+        return img;
+      });
       
-      loadImagesFromStorage();
+      // Sort images to prioritize approved ones and ensure consistent ordering
+      // Approved images first, then by image_id for consistency
+      const sortedImages = images.sort((a, b) => {
+        // Approved images come first
+        if (a.approved && !b.approved) return -1;
+        if (!a.approved && b.approved) return 1;
+        // Then sort by image_id for consistency
+        return a.image_id.localeCompare(b.image_id);
+      });
+      
+      console.log(`Loaded ${sortedImages.length} images (using storage URLs directly to save bandwidth)`);
+      setGeneratedImages(sortedImages);
     } else {
       console.log("No reference images in workflow, clearing state");
       setGeneratedImages([]);
@@ -184,22 +116,42 @@ export function ReferenceImageGenerator({
         ? [...referenceImageIds, oldReferenceImageId]
         : referenceImageIds;
       
-      // Get reference images - prefer storage_url if available (for Kie.ai API), otherwise use base64
+      // Get reference images - use storage_url directly (no base64 conversion needed!)
+      // Kie.ai API accepts URLs directly, so we avoid egress by NOT downloading/converting images
       const referenceImagesFromGenerated = allReferenceImageIds
         .map(id => generatedImages.find(img => img.image_id === id))
         .filter((img): img is ReferenceImage => img !== undefined)
-        .map(img => {
-          // Prefer storage_url (for Kie.ai API compatibility), fallback to base64
-          return img.storage_url || img.base64_data;
+        .map((img) => {
+          // Prefer storage_url - Kie.ai API accepts URLs directly (saves egress!)
+          if (img.storage_url) {
+            return img.storage_url;
+          }
+          // If we have base64_data (newly generated, not yet uploaded), we need to upload it first
+          // But for now, skip it - user should save image first to get storage_url
+          if (img.base64_data && img.base64_data.length > 100) {
+            console.warn(`Image ${img.image_id} has base64_data but no storage_url. Upload it to storage first to use as reference.`);
+            // TODO: Could auto-upload here, but that would cause egress. Better to require explicit upload.
+            return null;
+          }
+          // No data available - return null to filter out
+          console.warn(`Image ${img.image_id} has no base64_data and no storage_url - cannot use as reference`);
+          return null;
         });
       
-      // Combine user-uploaded/favorited reference images with generated reference images
+      // Filter out null/empty values and combine user-uploaded/favorited reference images
       // User images come first (they're the most important), then generated images
       // Limit to 14 total (Gemini API limit)
+      const validReferenceImages = referenceImagesFromGenerated.filter(
+        (img): img is string => img !== null && img !== "" && img.length > 0
+      );
+      
       const allReferenceImages = [
         ...userReferenceImages,
-        ...referenceImagesFromGenerated
+        ...validReferenceImages
       ].slice(0, 14);
+      
+      console.log(`Using ${allReferenceImages.length} reference image(s) for generation (${validReferenceImages.length} from generated, ${userReferenceImages.length} from user)`);
+      console.log(`✅ Using storage URLs directly - no base64 conversion needed (saves egress!)`);
       
       const image = await generateReferenceImage(
         storyboard.style_guide,
@@ -219,7 +171,7 @@ export function ReferenceImageGenerator({
       // Store URL instead of base64_data in database
       let imageWithStorage: ReferenceImage = newImage;
       try {
-        console.log(`Uploading image ${newImage.image_id} to Google Drive...`);
+        console.log(`Uploading image ${newImage.image_id} to Supabase Storage...`);
         const storageUrl = await uploadReferenceImage(
           newImage.base64_data,
           newImage.image_id,
@@ -260,8 +212,11 @@ export function ReferenceImageGenerator({
           })();
       
       const updatedImages = [...filteredImages, imageForDatabase];
-      // Keep full image with base64_data in state for display
-      const updatedImagesForDisplay = [...filteredImages, imageWithStorage];
+      // For display, use storage_url directly - don't keep base64_data in memory to save space
+      // Browser can display storage_url directly without base64 conversion
+      const updatedImagesForDisplay = [...filteredImages, imageWithStorage.storage_url 
+        ? { ...imageWithStorage, base64_data: "" } // Clear base64_data if we have storage_url
+        : imageWithStorage]; // Keep base64_data only if no storage_url (newly generated, not yet uploaded)
       setGeneratedImages(updatedImagesForDisplay);
 
       // Update workflow with new images (database version without large base64)
@@ -349,7 +304,7 @@ export function ReferenceImageGenerator({
         // Automatically upload to Supabase Storage to avoid database size limits
         let imageWithStorage: ReferenceImage = newImage;
         try {
-          console.log(`Uploading image ${newImage.image_id} to Google Drive...`);
+          console.log(`Uploading image ${newImage.image_id} to Supabase Storage...`);
           const storageUrl = await uploadReferenceImage(
             newImage.base64_data,
             newImage.image_id,
@@ -392,7 +347,10 @@ export function ReferenceImageGenerator({
         
         // Add new images
         newImagesForDatabase = [...newImagesForDatabase, imageForDatabase];
-        newImagesForDisplay = [...newImagesForDisplay, imageWithStorage];
+        // For display, use storage_url directly - don't keep base64_data in memory to save space
+        newImagesForDisplay = [...newImagesForDisplay, imageWithStorage.storage_url 
+          ? { ...imageWithStorage, base64_data: "" } // Clear base64_data if we have storage_url
+          : imageWithStorage]; // Keep base64_data only if no storage_url (newly generated, not yet uploaded)
         
         setGeneratedImages(newImagesForDisplay);
       } catch (err) {
@@ -600,7 +558,7 @@ export function ReferenceImageGenerator({
   const handleSaveToStyleGuide = async (image: ReferenceImage) => {
     setSavingToStyleGuide(image.image_id);
     try {
-      // Upload image to Google Drive
+      // Upload image to Supabase Storage
       const storageUrl = await uploadReferenceImage(
         image.base64_data,
         image.image_id,
@@ -716,7 +674,7 @@ export function ReferenceImageGenerator({
                     onClick={() => setExpandedImage(image)}
                   >
                     <img
-                      src={image.base64_data || image.storage_url || ""}
+                      src={image.storage_url || image.base64_data || ""}
                       alt={image.description}
                       className={`w-full h-32 object-cover rounded-md border-2 transition-all ${
                         image.approved
@@ -1022,7 +980,7 @@ export function ReferenceImageGenerator({
               ×
             </button>
             <img
-              src={expandedImage.base64_data || expandedImage.storage_url || ""}
+              src={expandedImage.storage_url || expandedImage.base64_data || ""}
               onError={async (e) => {
                 const target = e.target as HTMLImageElement;
                 const originalSrc = target.src;

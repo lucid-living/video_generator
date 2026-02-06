@@ -181,11 +181,13 @@ video_generator/
 # Gemini API (for storyboard and image generation)
 GOOGLE_AI_API_KEY=
 
-# Google Drive API (for image storage)
-# Download OAuth 2.0 credentials from Google Cloud Console
-# Place credentials.json in the backend directory
-GOOGLE_DRIVE_CREDENTIALS_FILE=credentials.json  # Optional: custom path
-GOOGLE_DRIVE_TOKEN_FILE=token.json  # Optional: custom path (auto-generated)
+# Supabase Storage (for image storage)
+# Images are stored in the 'reference-images' bucket
+# See SUPABASE_STORAGE_SETUP.md for setup instructions
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_ANON_KEY=your-anon-key
+# Optional: Use service role key for backend uploads (bypasses RLS)
+# SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 
 # Video Generation API (Kling AI)
 # New JWT-based authentication (recommended)

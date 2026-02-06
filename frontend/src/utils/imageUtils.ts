@@ -61,3 +61,14 @@ export async function normalizeStyleGuideImages(
   return normalized;
 }
 
+/**
+ * Load an image from Supabase Storage URL and convert to base64 data URI.
+ * Useful for loading images that are stored in Supabase Storage.
+ * 
+ * @param storageUrl Supabase Storage URL
+ * @returns Base64 data URI of the image
+ */
+export async function loadImageFromSupabaseStorage(storageUrl: string): Promise<string> {
+  return urlToBase64(storageUrl);
+}
+

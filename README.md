@@ -39,42 +39,37 @@ video_generator/
   - Kling or Hailuo - for video generation
   - Suno account (for web interface, no API key needed)
 
-### Google Drive Setup
+### Supabase Storage Setup
 
-The app uses Google Drive to store reference images, organized by project/workflow. Setup:
+The app uses Supabase Storage to store reference images, organized by workflow/project. Setup:
 
-1. **Create Google Cloud Project**:
-   - Go to [Google Cloud Console](https://console.cloud.google.com/)
-   - Create a new project or select an existing one
+1. **Create Storage Bucket**:
+   - Go to your Supabase project dashboard
+   - Navigate to **Storage** in the left sidebar
+   - Click **New bucket**
+   - Name: `reference-images`
+   - **Important**: Enable **Public bucket** (uncheck "Private bucket")
+   - Click **Create bucket**
 
-2. **Enable Google Drive API**:
-   - Navigate to **APIs & Services** → **Library**
-   - Search for "Google Drive API"
-   - Click **Enable**
+2. **Configure Bucket Policies** (Optional but recommended):
+   - Go to **Storage** → **Policies** → `reference-images`
+   - Add policies for public read access:
+     - **Policy Name**: Public Read
+     - **Allowed Operation**: SELECT
+     - **Policy Definition**: `true` (allows public read access)
+   - Add policies for authenticated uploads:
+     - **Policy Name**: Authenticated Upload
+     - **Allowed Operation**: INSERT
+     - **Policy Definition**: `auth.role() = 'authenticated'` (or use service role key for backend)
 
-3. **Create OAuth 2.0 Credentials**:
-   - Go to **APIs & Services** → **Credentials**
-   - Click **Create Credentials** → **OAuth client ID**
-   - Application type: **Desktop app**
-   - Name it (e.g., "AI Music Video Generator")
-   - Click **Create**
-   - Download the credentials JSON file
+3. **Environment Variables**:
+   - Ensure `SUPABASE_URL` and `SUPABASE_ANON_KEY` are set in your backend `.env.local`
+   - The backend uses these to upload images to Supabase Storage
 
-4. **Place Credentials File**:
-   - Rename the downloaded file to `credentials.json`
-   - Place it in the `backend/` directory
-   - Add `credentials.json` and `token.json` to `.gitignore` (token.json is auto-generated)
-
-5. **First Run Authentication**:
-   - When you first run the backend, it will open a browser window
-   - Sign in with your Google account
-   - Grant permissions to access Google Drive
-   - A `token.json` file will be created automatically
-
-**Note**: Images are organized in Google Drive as:
-- Main folder: `AI Music Video Generator Projects`
-- Subfolder per workflow: `Workflow_{workflow_id}/`
-- Each image is stored as: `{image_id}.png`
+**Note**: Images are organized in Supabase Storage as:
+- Bucket: `reference-images`
+- Folder per workflow: `{workflow_id}/`
+- Each image is stored as: `{workflow_id}/{image_id}.png`
 
 ### Backend Setup
 
@@ -87,6 +82,8 @@ pip install -r requirements.txt
 # - GOOGLE_AI_API_KEY (for Gemini storyboard generation)
 # - KIE_AI_API_KEY (for Nano Banana Pro image generation)
 # - OPENAI_API_KEY (fallback for DALL-E image generation)
+# - SUPABASE_URL (your Supabase project URL)
+# - SUPABASE_ANON_KEY (your Supabase anon/service key for storage)
 # - BACKEND_URL=http://localhost:8000 (for callback URL)
 uvicorn app.main:app --reload
 ```

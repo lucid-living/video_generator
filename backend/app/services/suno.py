@@ -10,10 +10,10 @@ from app.models.workflow import AudioAsset
 
 def _get_kie_api_key() -> str:
     """Get Kie.ai API key from environment."""
-    # Support both KIE_AI_API_KEY and KIE_AI_API_key (case variations)
-    api_key = os.getenv("KIE_AI_API_KEY") or os.getenv("KIE_AI_API_key")
+    # Single canonical env var name for clarity
+    api_key = os.getenv("KIE_AI_API_KEY")
     if not api_key:
-        raise ValueError("KIE_AI_API_KEY or KIE_AI_API_key environment variable is required for Suno API")
+        raise ValueError("KIE_AI_API_KEY environment variable is required for Suno API")
     return api_key
 
 

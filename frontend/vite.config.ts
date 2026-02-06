@@ -10,6 +10,10 @@ export default defineConfig(({ mode }) => {
   // Merge root and local env, root takes precedence
   const env = { ...localEnv, ...rootEnv }
   
+  // Debug: Log loaded env vars
+  console.log('🔍 Vite config - Loaded VITE_API_URL:', env.VITE_API_URL || 'NOT FOUND')
+  console.log('🔍 Vite config - Loaded NEXT_PUBLIC_API_URL:', env.NEXT_PUBLIC_API_URL || 'NOT FOUND')
+  
   // Build define object for NEXT_PUBLIC_ variables
   const define: Record<string, string> = {}
   Object.keys(env).forEach(key => {
@@ -18,14 +22,23 @@ export default defineConfig(({ mode }) => {
     }
   })
   
+  // Expose VITE_ variables explicitly via define (Vite auto-loads them, but this ensures they're available)
+  Object.keys(env).forEach(key => {
+    if (key.startsWith('VITE_')) {
+      define[`import.meta.env.${key}`] = JSON.stringify(env[key])
+    }
+  })
+  
   return {
     plugins: [react()],
     define,
+    // Explicitly set envPrefix to ensure VITE_ vars are loaded
+    envPrefix: ['VITE_', 'NEXT_PUBLIC_'],
     server: {
       port: 5173,
       proxy: {
         '/api': {
-          target: 'http://localhost:8000',
+          target: env.VITE_API_URL || 'http://localhost:8000',
           changeOrigin: true,
         },
       },

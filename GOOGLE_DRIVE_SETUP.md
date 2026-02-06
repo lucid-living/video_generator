@@ -1,6 +1,14 @@
 # Google Drive Setup Guide
 
-This project uses Google Drive to store reference images, organized by workflow/project. Each project gets its own folder in Google Drive.
+> **⚠️ DEPRECATED**: This project now uses Supabase Storage instead of Google Drive.
+> 
+> **Please see [SUPABASE_STORAGE_SETUP.md](./SUPABASE_STORAGE_SETUP.md) for current setup instructions.**
+> 
+> This file is kept for reference only. Google Drive integration is no longer actively maintained.
+
+---
+
+This project **previously** used Google Drive to store reference images, organized by workflow/project. Each project gets its own folder in Google Drive.
 
 ## Setup Steps
 

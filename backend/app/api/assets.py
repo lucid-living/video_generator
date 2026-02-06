@@ -10,7 +10,7 @@ from app.models.workflow import AudioAsset, ReferenceImage
 from app.services.suno import generate_music
 from app.services.imagen import generate_reference_image
 from app.services.style_analyzer import analyze_style_from_images
-from app.services.google_drive import upload_image_to_drive, delete_image_from_drive
+from app.services.supabase_storage import upload_image_to_storage, delete_image_from_storage
 
 router = APIRouter(prefix="/api/assets", tags=["assets"])
 
@@ -278,8 +278,8 @@ async def analyze_style_guide(request: StyleAnalysisRequest) -> Dict[str, Any]:
         )
 
 
-class GoogleDriveUploadRequest(BaseModel):
-    """Request model for uploading images to Google Drive."""
+class ImageUploadRequest(BaseModel):
+    """Request model for uploading images to Supabase Storage."""
     
     image_data_base64: str = Field(..., description="Base64 encoded image data (data URI format)")
     image_id: str = Field(..., description="Unique identifier for the image")
@@ -287,28 +287,28 @@ class GoogleDriveUploadRequest(BaseModel):
     description: str = Field(..., description="Description of the image")
 
 
-class GoogleDriveDeleteRequest(BaseModel):
-    """Request model for deleting images from Google Drive."""
+class ImageDeleteRequest(BaseModel):
+    """Request model for deleting images from Supabase Storage."""
     
-    file_url: str = Field(..., description="Google Drive file URL or file ID")
+    storage_url: str = Field(..., description="Supabase Storage URL of the image")
 
 
-@router.post("/upload-to-drive")
-async def upload_image_to_google_drive(request: GoogleDriveUploadRequest) -> dict:
+@router.post("/upload-image")
+async def upload_image_to_storage_endpoint(request: ImageUploadRequest) -> dict:
     """
-    Upload an image to Google Drive in the workflow's folder.
+    Upload an image to Supabase Storage in the workflow's folder.
     
     Args:
         request: Upload request with image data, image_id, workflow_id, and description
         
     Returns:
-        dict: {"url": str} - Public shareable URL of the uploaded image
+        dict: {"url": str} - Public URL of the uploaded image
         
     Raises:
         HTTPException: If upload fails
     """
     try:
-        url = await upload_image_to_drive(
+        url = await upload_image_to_storage(
             request.image_data_base64,
             request.image_id,
             request.workflow_id,
@@ -321,25 +321,31 @@ async def upload_image_to_google_drive(request: GoogleDriveUploadRequest) -> dic
         import traceback
         error_trace = traceback.format_exc()
         error_msg = str(e)
-        print(f"Google Drive upload error: {error_msg}")
+        print(f"Supabase Storage upload error: {error_msg}")
         print(f"Traceback: {error_trace}")
         
         # Provide more helpful error messages
-        if "credentials" in error_msg.lower() or "token" in error_msg.lower():
-            error_msg = f"Google Drive authentication failed: {error_msg}. Please check your Google Drive credentials configuration."
-        elif "not found" in error_msg.lower():
-            error_msg = f"Google Drive credentials file not found: {error_msg}. Please set up Google Drive integration."
+        if "bucket" in error_msg.lower() and "not found" in error_msg.lower():
+            error_msg = (
+                f"Storage bucket 'reference-images' not found. "
+                f"Please create it in your Supabase dashboard with public access enabled."
+            )
+        elif "credentials" in error_msg.lower() or "not configured" in error_msg.lower():
+            error_msg = (
+                f"Supabase credentials not configured: {error_msg}. "
+                f"Please set SUPABASE_URL and SUPABASE_ANON_KEY environment variables."
+            )
         
-        raise HTTPException(status_code=500, detail=f"Google Drive upload failed: {error_msg}")
+        raise HTTPException(status_code=500, detail=f"Supabase Storage upload failed: {error_msg}")
 
 
-@router.delete("/delete-from-drive")
-async def delete_image_from_google_drive(request: GoogleDriveDeleteRequest) -> dict:
+@router.delete("/delete-image")
+async def delete_image_from_storage_endpoint(request: ImageDeleteRequest) -> dict:
     """
-    Delete an image from Google Drive.
+    Delete an image from Supabase Storage.
     
     Args:
-        request: Delete request with file URL or file ID
+        request: Delete request with storage URL
         
     Returns:
         dict: {"success": bool} - Success status
@@ -348,12 +354,31 @@ async def delete_image_from_google_drive(request: GoogleDriveDeleteRequest) -> d
         HTTPException: If deletion fails
     """
     try:
-        await delete_image_from_drive(request.file_url)
+        await delete_image_from_storage(request.storage_url)
         return {"success": True}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Google Drive deletion failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Supabase Storage deletion failed: {str(e)}")
+
+
+# Legacy endpoints for backward compatibility (deprecated, use /upload-image and /delete-image)
+@router.post("/upload-to-drive")
+async def upload_image_to_google_drive_legacy(request: ImageUploadRequest) -> dict:
+    """
+    [DEPRECATED] Legacy endpoint - use /upload-image instead.
+    Upload an image to Supabase Storage (previously Google Drive).
+    """
+    return await upload_image_to_storage_endpoint(request)
+
+
+@router.delete("/delete-from-drive")
+async def delete_image_from_google_drive_legacy(request: ImageDeleteRequest) -> dict:
+    """
+    [DEPRECATED] Legacy endpoint - use /delete-image instead.
+    Delete an image from Supabase Storage (previously Google Drive).
+    """
+    return await delete_image_from_storage_endpoint(request)
 
 
 

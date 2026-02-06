@@ -40,7 +40,9 @@ export function ReferenceImageLibrary({
   const loadFavoritedImages = async () => {
     try {
       // Fetch favorited images from API (which gets image data from workflows)
-      const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+      // Use the same API base URL as the main API client
+      const API_BASE_URL = import.meta.env.NEXT_PUBLIC_API_URL || import.meta.env.VITE_API_URL || "http://localhost:8000";
+      console.log("🔍 ReferenceImageLibrary using API URL:", API_BASE_URL);
       const response = await fetch(`${API_BASE_URL}/api/learning/favorited-images?limit=50`);
       
       if (!response.ok) {

@@ -15,6 +15,11 @@ import type {
 // Support both NEXT_PUBLIC_ (from root .env.local) and VITE_ prefixes
 const API_BASE_URL = import.meta.env.NEXT_PUBLIC_API_URL || import.meta.env.VITE_API_URL || "http://localhost:8000";
 
+// Debug: Log the API URL being used (remove in production)
+if (import.meta.env.DEV) {
+  console.log("🔍 API Base URL configured:", API_BASE_URL);
+}
+
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
   headers: {
@@ -239,16 +244,16 @@ export async function analyzeStyleFromImages(
 }
 
 /**
- * Upload an image to Google Drive.
+ * Upload an image to Supabase Storage.
  */
-export async function uploadImageToGoogleDrive(
+export async function uploadImageToStorage(
   imageData: string,
   imageId: string,
   workflowId: string,
   description: string
 ): Promise<string> {
   const response = await apiClient.post<{ url: string }>(
-    "/api/assets/upload-to-drive",
+    "/api/assets/upload-image",
     {
       image_data_base64: imageData,
       image_id: imageId,
@@ -260,14 +265,35 @@ export async function uploadImageToGoogleDrive(
 }
 
 /**
- * Delete an image from Google Drive.
+ * Delete an image from Supabase Storage.
  */
-export async function deleteImageFromGoogleDrive(fileUrl: string): Promise<void> {
-  await apiClient.delete("/api/assets/delete-from-drive", {
+export async function deleteImageFromStorage(storageUrl: string): Promise<void> {
+  await apiClient.delete("/api/assets/delete-image", {
     data: {
-      file_url: fileUrl,
+      storage_url: storageUrl,
     },
   });
+}
+
+/**
+ * [DEPRECATED] Legacy function - use uploadImageToStorage instead.
+ * Upload an image to Supabase Storage (previously Google Drive).
+ */
+export async function uploadImageToGoogleDrive(
+  imageData: string,
+  imageId: string,
+  workflowId: string,
+  description: string
+): Promise<string> {
+  return uploadImageToStorage(imageData, imageId, workflowId, description);
+}
+
+/**
+ * [DEPRECATED] Legacy function - use deleteImageFromStorage instead.
+ * Delete an image from Supabase Storage (previously Google Drive).
+ */
+export async function deleteImageFromGoogleDrive(fileUrl: string): Promise<void> {
+  return deleteImageFromStorage(fileUrl);
 }
 
 
