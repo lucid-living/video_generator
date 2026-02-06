@@ -244,10 +244,11 @@ export function ReferenceImageGenerator({
 
     generateAllInProgressRef.current = true;
     setError(null);
-    let newImagesForDatabase: ReferenceImage[] = [...generatedImages.map(img => 
-      // Convert display images (with base64) to database format (without base64 if storage_url exists)
-      img.storage_url && img.base64_data ? { ...img, base64_data: "" } : img
-    )];
+    // Start with existing images (already have storage_url, no base64_data)
+    let newImagesForDatabase: ReferenceImage[] = [...generatedImages.map(img => ({
+      ...img,
+      base64_data: "", // Always clear base64_data - we only use storage_url
+    }))];
     let newImagesForDisplay: ReferenceImage[] = [...generatedImages];
     
     // Generate images for all shots sequentially
