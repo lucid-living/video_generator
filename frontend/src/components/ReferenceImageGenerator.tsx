@@ -167,56 +167,43 @@ export function ReferenceImageGenerator({
       // Initialize with approved: false
       const newImage = { ...image, approved: false };
       
-      // Automatically upload to Supabase Storage to avoid database size limits
-      // Store URL instead of base64_data in database
-      let imageWithStorage: ReferenceImage = newImage;
-      try {
-        console.log(`Uploading image ${newImage.image_id} to Supabase Storage...`);
-        const storageUrl = await uploadReferenceImage(
-          newImage.base64_data,
-          newImage.image_id,
-          newImage.description,
-          workflow.workflow_id
-        );
-        console.log(`Image uploaded successfully: ${storageUrl}`);
-        imageWithStorage = {
-          ...newImage,
-          storage_url: storageUrl,
-          // Keep base64_data in memory for immediate display, but don't save to DB
-        };
-      } catch (uploadError) {
-        console.error(`Failed to upload image ${newImage.image_id} to storage:`, uploadError);
-        setError(`Warning: Failed to upload image to storage. Image will be saved with base64 data (may cause slow saves). Error: ${uploadError instanceof Error ? uploadError.message : "Unknown error"}`);
-        // Continue with base64_data if upload fails (fallback)
-        // This ensures images can still be displayed even if storage upload fails
+      // REQUIRED: Upload to Supabase Storage before saving
+      // We ONLY use storage URLs - NO base64_data in database
+      console.log(`Uploading image ${newImage.image_id} to Supabase Storage...`);
+      const storageUrl = await uploadReferenceImage(
+        newImage.base64_data,
+        newImage.image_id,
+        newImage.description,
+        workflow.workflow_id
+      );
+      
+      if (!storageUrl || storageUrl.length === 0) {
+        throw new Error(`Upload failed: No storage URL returned for image ${newImage.image_id}`);
       }
+      
+      console.log(`Image uploaded successfully: ${storageUrl}`);
+      
+      // Create image with storage_url only (no base64_data)
+      const imageWithStorage: ReferenceImage = {
+        ...newImage,
+        storage_url: storageUrl,
+        base64_data: "", // Never store base64_data - use storage_url only
+      };
       
       // Remove any existing images for this shot before adding the new one
       const filteredImages = generatedImages.filter(
         (img) => !img.shot_indices.includes(shotIndex)
       );
       
-      // Create image for database (without base64_data if we have storage_url)
-      // CRITICAL: Never save images without at least one of storage_url or base64_data
-      const imageForDatabase: ReferenceImage = imageWithStorage.storage_url
-        ? {
-            ...imageWithStorage,
-            base64_data: "", // Don't store base64 in DB if we have storage_url
-          }
-        : imageWithStorage.base64_data && imageWithStorage.base64_data.length > 100
-        ? imageWithStorage // Keep base64_data if no storage_url (but base64 exists)
-        : (() => {
-            // This should never happen, but if it does, throw an error
-            console.error(`CRITICAL: Cannot save image ${imageWithStorage.image_id} - no storage_url and no base64_data`);
-            throw new Error(`Cannot save image ${imageWithStorage.image_id} - missing both storage_url and base64_data`);
-          })();
+      // Image for database (storage_url only, no base64_data)
+      const imageForDatabase: ReferenceImage = {
+        ...imageWithStorage,
+        base64_data: "", // Always empty - we only use storage_url
+      };
       
       const updatedImages = [...filteredImages, imageForDatabase];
-      // For display, use storage_url directly - don't keep base64_data in memory to save space
-      // Browser can display storage_url directly without base64 conversion
-      const updatedImagesForDisplay = [...filteredImages, imageWithStorage.storage_url 
-        ? { ...imageWithStorage, base64_data: "" } // Clear base64_data if we have storage_url
-        : imageWithStorage]; // Keep base64_data only if no storage_url (newly generated, not yet uploaded)
+      // For display, use storage_url - browser can display it directly
+      const updatedImagesForDisplay = [...filteredImages, imageWithStorage];
       setGeneratedImages(updatedImagesForDisplay);
 
       // Update workflow with new images (database version without large base64)
@@ -236,7 +223,12 @@ export function ReferenceImageGenerator({
       
       onImagesGenerated(updatedImagesForDisplay);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to generate image");
+      const errorMessage = err instanceof Error ? err.message : "Failed to generate image";
+      if (errorMessage.includes("upload") || errorMessage.includes("storage")) {
+        setError(`Failed to upload image to Supabase Storage: ${errorMessage}. Please check your backend configuration (SUPABASE_URL, SUPABASE_ANON_KEY).`);
+      } else {
+        setError(errorMessage);
+      }
     } finally {
       generatingRef.current.delete(shotIndex);
       setGenerating(null);
@@ -301,41 +293,28 @@ export function ReferenceImageGenerator({
         // Initialize with approved: false
         const newImage = { ...image, approved: false };
         
-        // Automatically upload to Supabase Storage to avoid database size limits
-        let imageWithStorage: ReferenceImage = newImage;
-        try {
-          console.log(`Uploading image ${newImage.image_id} to Supabase Storage...`);
-          const storageUrl = await uploadReferenceImage(
-            newImage.base64_data,
-            newImage.image_id,
-            newImage.description,
-            workflow.workflow_id
-          );
-          console.log(`Image uploaded successfully: ${storageUrl}`);
-          imageWithStorage = {
-            ...newImage,
-            storage_url: storageUrl,
-          };
-        } catch (uploadError) {
-          console.error(`Failed to upload image ${newImage.image_id} to storage:`, uploadError);
-          setError(`Warning: Failed to upload image to storage. Image will be saved with base64 data (may cause slow saves). Error: ${uploadError instanceof Error ? uploadError.message : "Unknown error"}`);
-          // Continue with base64_data if upload fails (fallback)
+        // REQUIRED: Upload to Supabase Storage before saving
+        // We ONLY use storage URLs - NO base64_data in database
+        console.log(`Uploading image ${newImage.image_id} to Supabase Storage...`);
+        const storageUrl = await uploadReferenceImage(
+          newImage.base64_data,
+          newImage.image_id,
+          newImage.description,
+          workflow.workflow_id
+        );
+        
+        if (!storageUrl || storageUrl.length === 0) {
+          throw new Error(`Upload failed: No storage URL returned for image ${newImage.image_id}`);
         }
         
-        // Create image for database (without base64_data if we have storage_url)
-        // CRITICAL: Never save images without at least one of storage_url or base64_data
-        const imageForDatabase: ReferenceImage = imageWithStorage.storage_url
-          ? {
-              ...imageWithStorage,
-              base64_data: "", // Don't store base64 in DB if we have storage_url
-            }
-          : imageWithStorage.base64_data && imageWithStorage.base64_data.length > 100
-          ? imageWithStorage // Keep base64_data if no storage_url (but base64 exists)
-          : (() => {
-              // This should never happen, but if it does, log error and skip this image
-              console.error(`CRITICAL: Cannot save image ${imageWithStorage.image_id} - no storage_url and no base64_data`);
-              return imageWithStorage; // Return as-is, saveWorkflow will filter it out
-            })();
+        console.log(`Image uploaded successfully: ${storageUrl}`);
+        
+        // Create image with storage_url only (no base64_data)
+        const imageWithStorage: ReferenceImage = {
+          ...newImage,
+          storage_url: storageUrl,
+          base64_data: "", // Never store base64_data - use storage_url only
+        };
         
         // Remove any existing image for this shot
         newImagesForDatabase = newImagesForDatabase.filter(
@@ -345,16 +324,26 @@ export function ReferenceImageGenerator({
           (img) => !img.shot_indices.includes(shot.line_index)
         );
         
+        // Image for database (storage_url only, no base64_data)
+        const imageForDatabase: ReferenceImage = {
+          ...imageWithStorage,
+          base64_data: "", // Always empty - we only use storage_url
+        };
+        
         // Add new images
         newImagesForDatabase = [...newImagesForDatabase, imageForDatabase];
-        // For display, use storage_url directly - don't keep base64_data in memory to save space
-        newImagesForDisplay = [...newImagesForDisplay, imageWithStorage.storage_url 
-          ? { ...imageWithStorage, base64_data: "" } // Clear base64_data if we have storage_url
-          : imageWithStorage]; // Keep base64_data only if no storage_url (newly generated, not yet uploaded)
+        // For display, use storage_url - browser can display it directly
+        newImagesForDisplay = [...newImagesForDisplay, imageWithStorage];
         
         setGeneratedImages(newImagesForDisplay);
       } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : "Unknown error";
         console.error(`Failed to generate image for shot ${shot.line_index}:`, err);
+        if (errorMessage.includes("upload") || errorMessage.includes("storage")) {
+          setError(`Failed to upload image for shot ${shot.line_index} to Supabase Storage: ${errorMessage}. Please check your backend configuration.`);
+        } else {
+          setError(`Failed to generate image for shot ${shot.line_index}: ${errorMessage}`);
+        }
         // Continue with next shot even if one fails
       } finally {
         generatingRef.current.delete(shot.line_index);
@@ -567,9 +556,10 @@ export function ReferenceImageGenerator({
       );
 
       // Update image with storage URL and saved flag
+      // Clear base64_data since we now have storage_url
       const updatedImages = generatedImages.map((img) =>
         img.image_id === image.image_id
-          ? { ...img, storage_url: storageUrl, saved_to_style_guide: true }
+          ? { ...img, storage_url: storageUrl, base64_data: "", saved_to_style_guide: true }
           : img
       );
       setGeneratedImages(updatedImages);

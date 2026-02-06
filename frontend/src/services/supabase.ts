@@ -34,34 +34,30 @@ export async function saveWorkflow(workflow: WorkflowState): Promise<void> {
      * Supabase was timing out (error 57014) because we were sending very large
      * JSON payloads that still contained base64 image data.
      *
-     * For persistence we prefer storage URLs over base64 data.
-     * If an image has a storage_url, we strip base64_data to save space.
-     * If an image doesn't have a storage_url yet, we keep base64_data so it can still be displayed.
+     * We ONLY use Supabase Storage URLs - NO base64_data in database.
+     * All images MUST be uploaded to Supabase Storage before saving.
+     * Images without storage_url will be filtered out (not saved).
      */
-    const referenceImagesForDatabase = workflow.reference_images.map((img) => {
-      // If we have a storage_url, we don't need base64_data in the database
-      if (img.storage_url) {
+    const referenceImagesForDatabase = workflow.reference_images
+      .filter((img) => {
+        // Only save images that have been uploaded to storage
+        if (!img.storage_url) {
+          console.warn(
+            `Skipping image ${img.image_id} - no storage_url. Image must be uploaded to Supabase Storage first.`
+          );
+          return false;
+        }
+        return true;
+      })
+      .map((img) => {
+        // Always strip base64_data - we only use storage_url
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
         const { base64_data: _ignored, ...rest } = img;
         return {
           ...rest,
-          base64_data: "", // Clear base64_data when we have storage_url
+          base64_data: "", // Always clear base64_data - use storage_url only
         };
-      } else {
-        // No storage_url - keep base64_data so image can still be displayed
-        // But limit size to prevent database timeouts (keep first 50KB of base64)
-        const base64_data = img.base64_data || "";
-        const maxBase64Size = 50000; // ~50KB limit
-        const truncatedBase64 = base64_data.length > maxBase64Size 
-          ? base64_data.substring(0, maxBase64Size) + "...[truncated]"
-          : base64_data;
-        
-        return {
-          ...img,
-          base64_data: truncatedBase64,
-        };
-      }
-    });
+      });
 
     const dataSize = JSON.stringify(referenceImagesForDatabase).length;
     console.log(
