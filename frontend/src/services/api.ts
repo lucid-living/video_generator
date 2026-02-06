@@ -252,16 +252,43 @@ export async function uploadImageToStorage(
   workflowId: string,
   description: string
 ): Promise<string> {
-  const response = await apiClient.post<{ url: string }>(
-    "/api/assets/upload-image",
-    {
-      image_data_base64: imageData,
-      image_id: imageId,
-      workflow_id: workflowId,
-      description,
+  try {
+    const response = await apiClient.post<{ url: string }>(
+      "/api/assets/upload-image",
+      {
+        image_data_base64: imageData,
+        image_id: imageId,
+        workflow_id: workflowId,
+        description,
+      }
+    );
+    return response.data.url;
+  } catch (error: any) {
+    // Extract detailed error message from backend response
+    let errorMessage = "Failed to upload image to Supabase Storage";
+    
+    if (error?.response?.data?.detail) {
+      // Backend returned a detailed error message
+      errorMessage = error.response.data.detail;
+    } else if (error?.response?.data?.message) {
+      errorMessage = error.response.data.message;
+    } else if (error?.message) {
+      errorMessage = error.message;
     }
-  );
-  return response.data.url;
+    
+    console.error(`[api] Upload error details:`, {
+      status: error?.response?.status,
+      statusText: error?.response?.statusText,
+      data: error?.response?.data,
+      message: errorMessage,
+    });
+    
+    // Create a new error with the detailed message
+    const detailedError = new Error(errorMessage);
+    (detailedError as any).status = error?.response?.status;
+    (detailedError as any).response = error?.response;
+    throw detailedError;
+  }
 }
 
 /**

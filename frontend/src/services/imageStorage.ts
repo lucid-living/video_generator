@@ -49,6 +49,15 @@ export async function uploadReferenceImage(
     if (error instanceof Error) {
       console.error(`[imageStorage] Error details: ${error.message}`);
       console.error(`[imageStorage] Stack: ${error.stack}`);
+      
+      // Check if it's a backend error with detailed message
+      const backendError = (error as any).response?.data;
+      if (backendError) {
+        console.error(`[imageStorage] Backend error response:`, backendError);
+        if (backendError.detail) {
+          console.error(`[imageStorage] Backend error detail: ${backendError.detail}`);
+        }
+      }
     }
     throw error;
   }
