@@ -2,10 +2,11 @@
 FastAPI application entry point.
 """
 
-from fastapi import FastAPI, Request, status
+from fastapi import FastAPI, Request, status, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 from dotenv import load_dotenv
 import os
 from pathlib import Path
@@ -36,9 +37,22 @@ app = FastAPI(
 )
 
 # CORS configuration
-cors_origins = os.getenv(
+cors_origins_env = os.getenv(
     "CORS_ORIGINS", "http://localhost:5173,http://localhost:3000"
-).split(",")
+)
+
+# Parse CORS origins: split by comma and strip whitespace, filter out empty strings
+cors_origins = [
+    origin.strip() 
+    for origin in cors_origins_env.split(",") 
+    if origin.strip()
+]
+
+# Log CORS configuration for debugging (don't log in production if sensitive)
+if cors_origins:
+    print(f"CORS configured with {len(cors_origins)} allowed origin(s)")
+    for origin in cors_origins:
+        print(f"  - {origin}")
 
 app.add_middleware(
     CORSMiddleware,
@@ -49,10 +63,32 @@ app.add_middleware(
 )
 
 
+class CORSDebugMiddleware(BaseHTTPMiddleware):
+    """
+    Middleware to log CORS-related information for debugging.
+    """
+    async def dispatch(self, request: Request, call_next):
+        origin = request.headers.get("origin")
+        if origin:
+            print(f"CORS Debug: Request from origin: {origin}")
+            print(f"CORS Debug: Allowed origins: {cors_origins}")
+            if origin not in cors_origins:
+                print(f"CORS Debug: WARNING - Origin {origin} not in allowed origins list")
+                print(f"CORS Debug: This will cause CORS errors!")
+            else:
+                print(f"CORS Debug: ✅ Origin {origin} is allowed")
+        return await call_next(request)
+
+
+# Add CORS debug middleware (always enabled to help debug CORS issues)
+app.add_middleware(CORSDebugMiddleware)
+
+
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     """
     Custom handler for validation errors to provide better error messages.
+    Ensures CORS headers are included in error responses.
     """
     errors = exc.errors()
     error_details = []
@@ -65,31 +101,84 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     
     print(f"Validation error: {error_details}")
     
-    return JSONResponse(
+    # Get origin from request headers
+    origin = request.headers.get("origin")
+    
+    # Create response with CORS headers
+    response = JSONResponse(
         status_code=status.HTTP_400_BAD_REQUEST,
         content={
             "detail": "Validation error",
             "errors": error_details
         }
     )
+    
+    # Add CORS headers if origin is in allowed origins
+    if origin and origin in cors_origins:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Allow-Methods"] = "*"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+    
+    return response
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    """
+    Handler for HTTPException to ensure CORS headers are included.
+    """
+    # Get origin from request headers
+    origin = request.headers.get("origin")
+    
+    # Create response with CORS headers
+    response = JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail}
+    )
+    
+    # Add CORS headers if origin is in allowed origins
+    if origin and origin in cors_origins:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Allow-Methods"] = "*"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+    elif origin:
+        print(f"CORS Warning: Origin {origin} not in allowed origins: {cors_origins}")
+    
+    return response
 
 
 @app.exception_handler(Exception)
 async def general_exception_handler(request: Request, exc: Exception):
     """
     Catch-all exception handler for unexpected errors.
+    Ensures CORS headers are included in error responses.
     """
     import traceback
     error_trace = traceback.format_exc()
     print(f"Unexpected error: {error_trace}")
     
-    return JSONResponse(
+    # Get origin from request headers
+    origin = request.headers.get("origin")
+    
+    # Create response with CORS headers
+    response = JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={
             "detail": f"Internal server error: {str(exc)}",
             "type": type(exc).__name__
         }
     )
+    
+    # Add CORS headers if origin is in allowed origins
+    if origin and origin in cors_origins:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Allow-Methods"] = "*"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+    
+    return response
 
 
 # Include routers
