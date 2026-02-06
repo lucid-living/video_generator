@@ -49,8 +49,8 @@ async def submit_image_feedback(feedback: ImageFeedbackRequest) -> Dict[str, Any
         import os
         from supabase import create_client, Client
         
-        supabase_url = os.getenv("SUPABASE_URL")
-        supabase_key = os.getenv("SUPABASE_ANON_KEY")
+        supabase_url = os.getenv("SUPABASE_URL") or os.getenv("NEXT_PUBLIC_SUPABASE_URL")
+        supabase_key = os.getenv("SUPABASE_ANON_KEY") or os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY")
         
         if not supabase_url or not supabase_key:
             raise HTTPException(status_code=500, detail="Supabase not configured")
@@ -116,8 +116,8 @@ async def get_favorited_images(
         import os
         from supabase import create_client, Client
         
-        supabase_url = os.getenv("SUPABASE_URL")
-        supabase_key = os.getenv("SUPABASE_ANON_KEY")
+        supabase_url = os.getenv("SUPABASE_URL") or os.getenv("NEXT_PUBLIC_SUPABASE_URL")
+        supabase_key = os.getenv("SUPABASE_ANON_KEY") or os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY")
         
         if not supabase_url or not supabase_key:
             raise HTTPException(status_code=500, detail="Supabase not configured")

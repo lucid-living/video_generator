@@ -247,8 +247,8 @@ async def suno_callback(request: Request, payload: Optional[SunoCallbackPayload]
                     "message": "Supabase package not installed"
                 }
             
-            supabase_url = os.getenv("SUPABASE_URL")
-            supabase_key = os.getenv("SUPABASE_ANON_KEY")
+            supabase_url = os.getenv("SUPABASE_URL") or os.getenv("NEXT_PUBLIC_SUPABASE_URL")
+            supabase_key = os.getenv("SUPABASE_ANON_KEY") or os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY")
             
             if not supabase_url or not supabase_key:
                 logger.error("Supabase not configured - cannot update workflow")

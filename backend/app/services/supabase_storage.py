@@ -19,12 +19,15 @@ def _get_supabase_client() -> Client:
     Raises:
         ValueError: If Supabase credentials are missing
     """
-    supabase_url = os.getenv("SUPABASE_URL")
-    supabase_key = os.getenv("SUPABASE_ANON_KEY")
+    # Check for SUPABASE_URL first, then fallback to NEXT_PUBLIC_SUPABASE_URL
+    supabase_url = os.getenv("SUPABASE_URL") or os.getenv("NEXT_PUBLIC_SUPABASE_URL")
+    # Check for SUPABASE_ANON_KEY first, then fallback to NEXT_PUBLIC_SUPABASE_ANON_KEY
+    supabase_key = os.getenv("SUPABASE_ANON_KEY") or os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY")
     
     if not supabase_url or not supabase_key:
         raise ValueError(
-            "Supabase credentials not configured. Please set SUPABASE_URL and SUPABASE_ANON_KEY environment variables."
+            "Supabase credentials not configured. Please set SUPABASE_URL (or NEXT_PUBLIC_SUPABASE_URL) "
+            "and SUPABASE_ANON_KEY (or NEXT_PUBLIC_SUPABASE_ANON_KEY) environment variables."
         )
     
     return create_client(supabase_url, supabase_key)

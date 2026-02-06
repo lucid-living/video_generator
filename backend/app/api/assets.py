@@ -387,7 +387,7 @@ async def upload_image_to_storage_endpoint(request: ImageUploadRequest) -> dict:
         elif "credentials" in error_msg.lower() or "not configured" in error_msg.lower():
             error_msg = (
                 f"Supabase credentials not configured. "
-                f"Please set SUPABASE_URL and SUPABASE_ANON_KEY environment variables in Railway."
+                f"Please set SUPABASE_URL (or NEXT_PUBLIC_SUPABASE_URL) and SUPABASE_ANON_KEY (or NEXT_PUBLIC_SUPABASE_ANON_KEY) environment variables in Railway."
             )
         elif "invalid base64" in error_msg.lower():
             error_msg = (
