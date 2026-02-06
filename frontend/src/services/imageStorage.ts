@@ -26,6 +26,11 @@ export async function uploadReferenceImage(
       throw new Error("workflowId is required for Supabase Storage upload");
     }
     
+    if (!imageData || imageData.length < 100) {
+      throw new Error(`Invalid image data: imageData is ${imageData ? imageData.length : 0} characters`);
+    }
+    
+    console.log(`[imageStorage] Uploading image ${imageId} to Supabase Storage (workflow: ${workflowId})`);
     const url = await uploadImageToStorage(
       imageData,
       imageId,
@@ -33,9 +38,18 @@ export async function uploadReferenceImage(
       description
     );
     
+    if (!url || url.length === 0) {
+      throw new Error("Upload succeeded but returned empty URL");
+    }
+    
+    console.log(`[imageStorage] ✓ Image ${imageId} uploaded successfully: ${url}`);
     return url;
   } catch (error) {
-    console.error("Error uploading reference image to Supabase Storage:", error);
+    console.error(`[imageStorage] ✗ Failed to upload image ${imageId} to Supabase Storage:`, error);
+    if (error instanceof Error) {
+      console.error(`[imageStorage] Error details: ${error.message}`);
+      console.error(`[imageStorage] Stack: ${error.stack}`);
+    }
     throw error;
   }
 }
