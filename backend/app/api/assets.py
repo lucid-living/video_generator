@@ -163,6 +163,13 @@ async def create_reference_image(request: ReferenceImageRequest) -> ReferenceIma
     Raises:
         HTTPException: If generation fails
     """
+    # Log request details for debugging
+    print(f"🎨 Generate image request: description_length={len(request.description)}, "
+          f"style_guide_length={len(request.style_guide)}, "
+          f"shot_indices={request.shot_indices}, "
+          f"reference_images_count={len(request.reference_images_base64)}, "
+          f"previous_images_count={len(request.previous_images) if request.previous_images else 0}")
+    
     try:
         # Support both old single image format and new multiple images format
         reference_images = request.reference_images_base64
@@ -173,6 +180,7 @@ async def create_reference_image(request: ReferenceImageRequest) -> ReferenceIma
         # Use image reference if any reference images are provided
         use_image_reference = request.use_image_reference or len(reference_images) > 0
         
+        print(f"🎨 Starting image generation (use_image_reference={use_image_reference})...")
         image = await generate_reference_image(
             request.style_guide,
             request.description,
@@ -182,19 +190,40 @@ async def create_reference_image(request: ReferenceImageRequest) -> ReferenceIma
             use_image_reference,
             reference_images
         )
+        print(f"✅ Successfully generated image: {image.image_id}")
         return image
     except ValueError as e:
         # Include the full error message for debugging
         error_msg = str(e)
         import traceback
-        print(f"ValueError in generate-reference-image: {error_msg}")
+        print(f"❌ ValueError in generate-reference-image: {error_msg}")
         print(f"Traceback: {traceback.format_exc()}")
+        
+        # Provide more helpful error messages for common issues
+        if "API key" in error_msg.lower() or "not set" in error_msg.lower():
+            if "KIE_AI_API_KEY" in error_msg or "kie" in error_msg.lower():
+                error_msg = (
+                    "KIE_AI_API_KEY environment variable not set. "
+                    "Please set your Kie.ai API key in Railway variables. "
+                    "Get your key at https://kie.ai/nano-banana-pro"
+                )
+            elif "OPENAI_API_KEY" in error_msg or "openai" in error_msg.lower():
+                error_msg = (
+                    "OPENAI_API_KEY environment variable not set. "
+                    "Please set your OpenAI API key in Railway variables."
+                )
+            elif "GOOGLE_AI_API_KEY" in error_msg or "google" in error_msg.lower():
+                error_msg = (
+                    "GOOGLE_AI_API_KEY environment variable not set. "
+                    "Please set your Google AI API key in Railway variables."
+                )
+        
         raise HTTPException(status_code=400, detail=error_msg)
     except Exception as e:
         # Include full error details for debugging
         error_msg = f"Image generation failed: {str(e)}"
         import traceback
-        print(f"Exception in generate-reference-image: {error_msg}")
+        print(f"❌ Exception in generate-reference-image: {error_msg}")
         print(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=error_msg)
 
