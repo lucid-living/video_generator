@@ -114,59 +114,92 @@ async def get_favorited_images(
     """
     try:
         import os
+        import traceback
         from supabase import create_client, Client
+        
+        print(f"📚 Getting favorited images (limit={limit})...")
         
         supabase_url = os.getenv("SUPABASE_URL") or os.getenv("NEXT_PUBLIC_SUPABASE_URL")
         supabase_key = os.getenv("SUPABASE_ANON_KEY") or os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY")
         
         if not supabase_url or not supabase_key:
-            raise HTTPException(status_code=500, detail="Supabase not configured")
+            error_msg = "Supabase not configured. Please set SUPABASE_URL (or NEXT_PUBLIC_SUPABASE_URL) and SUPABASE_ANON_KEY (or NEXT_PUBLIC_SUPABASE_ANON_KEY)"
+            print(f"❌ {error_msg}")
+            raise HTTPException(status_code=500, detail=error_msg)
         
+        print(f"✅ Supabase configured: URL={supabase_url[:30]}...")
         supabase: Client = create_client(supabase_url, supabase_key)
         
         # Get favorited image feedback
-        response = supabase.table("image_feedback").select(
-            "image_id, workflow_id, description, visual_characteristics"
-        ).eq("favorited", True).order("created_at", desc=True).limit(limit).execute()
-        
-        if not response.data:
-            return []
-        
-        feedback_data = response.data if hasattr(response, 'data') else []
+        print("📚 Querying image_feedback table...")
+        try:
+            response = supabase.table("image_feedback").select(
+                "image_id, workflow_id, description, visual_characteristics"
+            ).eq("favorited", True).order("created_at", desc=True).limit(limit).execute()
+            
+            if not response.data:
+                print("📚 No favorited images found")
+                return []
+            
+            feedback_data = response.data if hasattr(response, 'data') else []
+            print(f"📚 Found {len(feedback_data)} favorited image(s)")
+        except Exception as e:
+            error_msg = f"Failed to query image_feedback table: {str(e)}"
+            print(f"❌ {error_msg}")
+            print(f"Traceback: {traceback.format_exc()}")
+            # If table doesn't exist, return empty list instead of error
+            if "does not exist" in str(e).lower() or "relation" in str(e).lower():
+                print("⚠️ image_feedback table may not exist - returning empty list")
+                return []
+            raise
         
         # Get actual image data from workflows
         favorited_images = []
         for feedback in feedback_data:
-            workflow_id = feedback["workflow_id"]
-            image_id = feedback["image_id"]
+            workflow_id = feedback.get("workflow_id")
+            image_id = feedback.get("image_id")
             
-            # Get workflow
-            workflow_response = supabase.table("video_workflows").select(
-                "reference_images"
-            ).eq("workflow_id", workflow_id).execute()
-            
-            if not workflow_response.data:
+            if not workflow_id or not image_id:
                 continue
             
-            workflow = workflow_response.data[0]
-            
-            # Find the image in the workflow
-            reference_images = workflow.get("reference_images", [])
-            image = next((img for img in reference_images if img.get("image_id") == image_id), None)
-            
-            if image:
-                favorited_images.append({
-                    "image_id": image_id,
-                    "base64_data": image.get("base64_data") or "",
-                    "storage_url": image.get("storage_url"),
-                    "description": feedback["description"],
-                    "visual_characteristics": feedback.get("visual_characteristics"),
-                })
+            # Get workflow
+            try:
+                workflow_response = supabase.table("video_workflows").select(
+                    "reference_images"
+                ).eq("workflow_id", workflow_id).execute()
+                
+                if not workflow_response.data:
+                    continue
+                
+                workflow = workflow_response.data[0]
+                
+                # Find the image in the workflow
+                reference_images = workflow.get("reference_images", [])
+                image = next((img for img in reference_images if img.get("image_id") == image_id), None)
+                
+                if image:
+                    favorited_images.append({
+                        "image_id": image_id,
+                        "base64_data": image.get("base64_data") or "",
+                        "storage_url": image.get("storage_url"),
+                        "description": feedback.get("description", ""),
+                        "visual_characteristics": feedback.get("visual_characteristics"),
+                    })
+            except Exception as e:
+                print(f"⚠️ Error getting workflow {workflow_id}: {str(e)}")
+                continue
         
+        print(f"✅ Returning {len(favorited_images)} favorited image(s)")
         return favorited_images
         
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get favorited images: {str(e)}")
+        import traceback
+        error_msg = f"Failed to get favorited images: {str(e)}"
+        print(f"❌ {error_msg}")
+        print(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=error_msg)
 
 
 @router.get("/insights")
