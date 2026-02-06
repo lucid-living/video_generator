@@ -4,7 +4,7 @@
  */
 
 import { supabase } from "../services/supabase";
-import type { WorkflowState, ReferenceImage } from "../types/storyboard";
+import type { ReferenceImage } from "../types/storyboard";
 
 export async function debugImages(): Promise<void> {
   console.log("=".repeat(80));

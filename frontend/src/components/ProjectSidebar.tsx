@@ -3,7 +3,7 @@
  */
 
 import { useState, useEffect } from "react";
-import { listWorkflows, deleteWorkflow, generateWorkflowId } from "../services/supabase";
+import { listWorkflows, deleteWorkflow } from "../services/supabase";
 import type { WorkflowState } from "../types/storyboard";
 
 interface ProjectSidebarProps {

@@ -610,7 +610,7 @@ export function ReferenceImageGenerator({
         selectedImages={userReferenceImages}
         maxSelections={14}
         showStyleExtraction={true}
-        onStyleExtracted={(styleGuide) => {
+        onStyleExtracted={() => {
           // Could update the storyboard style guide or show a notification
           alert("Style extracted! Consider updating your style guide with this information.");
         }}

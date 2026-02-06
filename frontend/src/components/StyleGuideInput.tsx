@@ -2,8 +2,6 @@
  * Component for inputting and editing the style guide.
  */
 
-import { useState } from "react";
-
 interface StyleGuideInputProps {
   value: string;
   onChange: (value: string) => void;
