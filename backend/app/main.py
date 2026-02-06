@@ -41,9 +41,9 @@ cors_origins_env = os.getenv(
     "CORS_ORIGINS", "http://localhost:5173,http://localhost:3000"
 )
 
-# Parse CORS origins: split by comma and strip whitespace, filter out empty strings
+# Parse CORS origins: split by comma, strip whitespace, remove trailing slashes, filter out empty strings
 cors_origins = [
-    origin.strip() 
+    origin.strip().rstrip("/")  # Remove trailing slashes for consistent matching
     for origin in cors_origins_env.split(",") 
     if origin.strip()
 ]
@@ -74,20 +74,24 @@ class CORSPreflightMiddleware(BaseHTTPMiddleware):
         # Handle OPTIONS preflight requests explicitly
         if request.method == "OPTIONS":
             origin = request.headers.get("origin")
-            if origin and origin in cors_origins:
-                print(f"CORS Preflight: Handling OPTIONS request from {origin}")
-                response = JSONResponse(
-                    status_code=200,
-                    content={}
-                )
-                response.headers["Access-Control-Allow-Origin"] = origin
-                response.headers["Access-Control-Allow-Credentials"] = "true"
-                response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
-                response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With"
-                response.headers["Access-Control-Max-Age"] = "3600"
-                return response
-            elif origin:
-                print(f"CORS Preflight: WARNING - Origin {origin} not allowed for OPTIONS request")
+            if origin:
+                # Normalize origin (remove trailing slash) for comparison
+                normalized_origin = origin.rstrip("/")
+                # Check if normalized origin matches any allowed origin (also normalized)
+                if normalized_origin in cors_origins:
+                    print(f"CORS Preflight: Handling OPTIONS request from {origin}")
+                    response = JSONResponse(
+                        status_code=200,
+                        content={}
+                    )
+                    response.headers["Access-Control-Allow-Origin"] = origin
+                    response.headers["Access-Control-Allow-Credentials"] = "true"
+                    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
+                    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With"
+                    response.headers["Access-Control-Max-Age"] = "3600"
+                    return response
+                else:
+                    print(f"CORS Preflight: WARNING - Origin {origin} (normalized: {normalized_origin}) not in allowed origins: {cors_origins}")
         
         return await call_next(request)
 
@@ -99,13 +103,14 @@ class CORSDebugMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         origin = request.headers.get("origin")
         if origin:
-            print(f"CORS Debug: Request from origin: {origin}")
+            normalized_origin = origin.rstrip("/")
+            print(f"CORS Debug: Request from origin: {origin} (normalized: {normalized_origin})")
             print(f"CORS Debug: Allowed origins: {cors_origins}")
-            if origin not in cors_origins:
-                print(f"CORS Debug: WARNING - Origin {origin} not in allowed origins list")
-                print(f"CORS Debug: This will cause CORS errors!")
-            else:
+            if normalized_origin in cors_origins:
                 print(f"CORS Debug: ✅ Origin {origin} is allowed")
+            else:
+                print(f"CORS Debug: WARNING - Origin {origin} (normalized: {normalized_origin}) not in allowed origins list")
+                print(f"CORS Debug: This will cause CORS errors!")
         return await call_next(request)
 
 
@@ -144,12 +149,14 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         }
     )
     
-    # Add CORS headers if origin is in allowed origins
-    if origin and origin in cors_origins:
-        response.headers["Access-Control-Allow-Origin"] = origin
-        response.headers["Access-Control-Allow-Credentials"] = "true"
-        response.headers["Access-Control-Allow-Methods"] = "*"
-        response.headers["Access-Control-Allow-Headers"] = "*"
+    # Add CORS headers if origin is in allowed origins (normalize for comparison)
+    if origin:
+        normalized_origin = origin.rstrip("/")
+        if normalized_origin in cors_origins:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+            response.headers["Access-Control-Allow-Methods"] = "*"
+            response.headers["Access-Control-Allow-Headers"] = "*"
     
     return response
 
@@ -168,14 +175,16 @@ async def http_exception_handler(request: Request, exc: HTTPException):
         content={"detail": exc.detail}
     )
     
-    # Add CORS headers if origin is in allowed origins
-    if origin and origin in cors_origins:
-        response.headers["Access-Control-Allow-Origin"] = origin
-        response.headers["Access-Control-Allow-Credentials"] = "true"
-        response.headers["Access-Control-Allow-Methods"] = "*"
-        response.headers["Access-Control-Allow-Headers"] = "*"
-    elif origin:
-        print(f"CORS Warning: Origin {origin} not in allowed origins: {cors_origins}")
+    # Add CORS headers if origin is in allowed origins (normalize for comparison)
+    if origin:
+        normalized_origin = origin.rstrip("/")
+        if normalized_origin in cors_origins:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+            response.headers["Access-Control-Allow-Methods"] = "*"
+            response.headers["Access-Control-Allow-Headers"] = "*"
+        else:
+            print(f"CORS Warning: Origin {origin} (normalized: {normalized_origin}) not in allowed origins: {cors_origins}")
     
     return response
 
@@ -202,12 +211,14 @@ async def general_exception_handler(request: Request, exc: Exception):
         }
     )
     
-    # Add CORS headers if origin is in allowed origins
-    if origin and origin in cors_origins:
-        response.headers["Access-Control-Allow-Origin"] = origin
-        response.headers["Access-Control-Allow-Credentials"] = "true"
-        response.headers["Access-Control-Allow-Methods"] = "*"
-        response.headers["Access-Control-Allow-Headers"] = "*"
+    # Add CORS headers if origin is in allowed origins (normalize for comparison)
+    if origin:
+        normalized_origin = origin.rstrip("/")
+        if normalized_origin in cors_origins:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+            response.headers["Access-Control-Allow-Methods"] = "*"
+            response.headers["Access-Control-Allow-Headers"] = "*"
     
     return response
 
