@@ -98,6 +98,21 @@ export function ReferenceImageGenerator({
       // Use the base_video_prompt as the description, combined with style guide
       const description = shot.base_video_prompt;
       
+      // Validate required fields
+      if (!description || description.trim().length === 0) {
+        setError(`Shot ${shotIndex} has no video prompt. Please add a prompt in the storyboard editor.`);
+        generatingRef.current.delete(shotIndex);
+        setGenerating(null);
+        return;
+      }
+      
+      if (!storyboard.style_guide || storyboard.style_guide.trim().length === 0) {
+        setError("Style guide is required. Please add a style guide in Phase 1.");
+        generatingRef.current.delete(shotIndex);
+        setGenerating(null);
+        return;
+      }
+      
       // Get previous images for consistency (only images from earlier shots)
       // Include the full description and base64 data for better character consistency
       const previousImages = generatedImages
@@ -222,10 +237,32 @@ export function ReferenceImageGenerator({
       }
       
       onImagesGenerated(updatedImagesForDisplay);
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : "Failed to generate image";
+    } catch (err: any) {
+      // Extract detailed error message
+      let errorMessage = "Failed to generate image";
+      
+      if (err instanceof Error) {
+        errorMessage = err.message;
+      } else if (err?.response?.data?.detail) {
+        // FastAPI error format
+        errorMessage = err.response.data.detail;
+      } else if (err?.response?.data?.message) {
+        errorMessage = err.response.data.message;
+      } else if (typeof err === "string") {
+        errorMessage = err;
+      }
+      
+      console.error(`Error generating image for shot ${shotIndex}:`, {
+        error: err,
+        message: errorMessage,
+        status: err?.response?.status,
+        data: err?.response?.data,
+      });
+      
       if (errorMessage.includes("upload") || errorMessage.includes("storage")) {
         setError(`Failed to upload image to Supabase Storage: ${errorMessage}. Please check your backend configuration (SUPABASE_URL, SUPABASE_ANON_KEY).`);
+      } else if (errorMessage.includes("API key") || errorMessage.includes("not set")) {
+        setError(`Configuration Error: ${errorMessage}. Please check your backend environment variables.`);
       } else {
         setError(errorMessage);
       }

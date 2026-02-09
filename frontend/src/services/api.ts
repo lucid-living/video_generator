@@ -107,21 +107,48 @@ export async function generateReferenceImage(
     ? reference_images_base64
     : (reference_image_base64 ? [reference_image_base64] : []);
 
-  const response = await apiClient.post<ReferenceImage>(
-    "/api/assets/generate-reference-image",
-    {
-      style_guide,
-      description,
-      shot_indices,
-      previous_images: previous_images || [],
-      style_guide_images: normalizedImages, // URLs passed directly - backend accepts them
-      use_image_reference: use_image_reference || (referenceImages.length > 0),
-      reference_images_base64: referenceImages, // URLs passed directly - backend accepts them
-      // Keep old field for backward compatibility
-      reference_image_base64: reference_image_base64 || "",
+  try {
+    const response = await apiClient.post<ReferenceImage>(
+      "/api/assets/generate-reference-image",
+      {
+        style_guide,
+        description,
+        shot_indices,
+        previous_images: previous_images || [],
+        style_guide_images: normalizedImages, // URLs passed directly - backend accepts them
+        use_image_reference: use_image_reference || (referenceImages.length > 0),
+        reference_images_base64: referenceImages, // URLs passed directly - backend accepts them
+        // Keep old field for backward compatibility
+        reference_image_base64: reference_image_base64 || "",
+      }
+    );
+    return response.data;
+  } catch (error: any) {
+    // Extract detailed error message from backend response
+    let errorMessage = "Failed to generate reference image";
+    
+    if (error?.response?.data?.detail) {
+      // Backend returned a detailed error message (FastAPI format)
+      errorMessage = error.response.data.detail;
+    } else if (error?.response?.data?.message) {
+      errorMessage = error.response.data.message;
+    } else if (error?.message) {
+      errorMessage = error.message;
     }
-  );
-  return response.data;
+    
+    console.error(`[api] Generate image error:`, {
+      status: error?.response?.status,
+      statusText: error?.response?.statusText,
+      data: error?.response?.data,
+      message: errorMessage,
+    });
+    
+    // Create a new error with the detailed message
+    const detailedError = new Error(errorMessage);
+    (detailedError as any).status = error?.response?.status;
+    (detailedError as any).response = error?.response;
+    throw detailedError;
+  }
 }
 
 /**
