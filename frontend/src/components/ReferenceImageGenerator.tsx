@@ -685,47 +685,12 @@ export function ReferenceImageGenerator({
                           attempted_src: originalSrc,
                         });
                         
-                        // If storage_url failed, try to reload from storage with a fresh fetch
-                        if (image.storage_url && originalSrc === image.storage_url) {
-                          console.log(`Attempting to reload image ${image.image_id} from storage...`);
-                          try {
-                            // Try fetching with cache busting
-                            const response = await fetch(`${image.storage_url}?t=${Date.now()}`, {
-                              method: 'GET',
-                              mode: 'cors',
-                              cache: 'no-cache',
-                            });
-                            
-                            if (response.ok) {
-                              const blob = await response.blob();
-                              const reader = new FileReader();
-                              reader.onloadend = () => {
-                                const base64 = reader.result as string;
-                                console.log(`Successfully reloaded image ${image.image_id} from storage`);
-                                target.src = base64;
-                                // Update the image in state with the loaded base64
-                                const updatedImages = generatedImages.map((img) =>
-                                  img.image_id === image.image_id
-                                    ? { ...img, base64_data: base64 }
-                                    : img
-                                );
-                                setGeneratedImages(updatedImages);
-                              };
-                              reader.onerror = () => {
-                                console.error(`Failed to convert blob to base64 for image ${image.image_id}`);
-                                target.src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100'%3E%3Crect fill='%23f3f4f6' width='100' height='100'/%3E%3Ctext x='50%25' y='50%25' text-anchor='middle' dy='.3em' fill='%239ca3af' font-family='sans-serif' font-size='12'%3EFailed to load%3C/text%3E%3C/svg%3E";
-                              };
-                              reader.readAsDataURL(blob);
-                              return; // Don't show error placeholder yet
-                            } else {
-                              console.error(`Storage fetch failed with status ${response.status}: ${response.statusText}`);
-                            }
-                          } catch (fetchError) {
-                            console.error(`Error fetching from storage:`, fetchError);
-                          }
-                        }
+                        // ⚠️ REMOVED: Fallback base64 conversion to prevent egress
+                        // Previously, we would download the image and convert to base64 on error.
+                        // This caused unnecessary egress. Now we just show an error placeholder.
+                        // The browser handles URL loading - if it fails, we show an error.
                         
-                        // Show error placeholder if all retries failed
+                        // Show error placeholder immediately (no retry with base64 conversion)
                         target.src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100'%3E%3Crect fill='%23f3f4f6' width='100' height='100'/%3E%3Ctext x='50%25' y='50%25' text-anchor='middle' dy='.3em' fill='%239ca3af' font-family='sans-serif' font-size='12'%3EFailed to load%3C/text%3E%3C/svg%3E";
                       }}
                       onLoad={() => {
@@ -983,31 +948,9 @@ export function ReferenceImageGenerator({
                   attempted_src: originalSrc,
                 });
                 
-                // Try to reload from storage
-                if (expandedImage.storage_url && originalSrc === expandedImage.storage_url) {
-                  try {
-                    const response = await fetch(`${expandedImage.storage_url}?t=${Date.now()}`, {
-                      method: 'GET',
-                      mode: 'cors',
-                      cache: 'no-cache',
-                    });
-                    
-                    if (response.ok) {
-                      const blob = await response.blob();
-                      const reader = new FileReader();
-                      reader.onloadend = () => {
-                        const base64 = reader.result as string;
-                        target.src = base64;
-                        // Update the expanded image
-                        setExpandedImage({ ...expandedImage, base64_data: base64 });
-                      };
-                      reader.readAsDataURL(blob);
-                      return;
-                    }
-                  } catch (error) {
-                    console.error(`Error reloading expanded image:`, error);
-                  }
-                }
+                // ⚠️ REMOVED: Fallback base64 conversion to prevent egress
+                // Previously, we would download the image and convert to base64 on error.
+                // This caused unnecessary egress. The browser handles URL loading - if it fails, we show an error.
                 
                 // Show error placeholder
                 target.src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400'%3E%3Crect fill='%23f3f4f6' width='400' height='400'/%3E%3Ctext x='50%25' y='50%25' text-anchor='middle' dy='.3em' fill='%239ca3af' font-family='sans-serif' font-size='16'%3EImage failed to load%3C/text%3E%3C/svg%3E";

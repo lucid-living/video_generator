@@ -97,7 +97,7 @@ export async function generateReferenceImage(
   // Import here to avoid circular dependencies
   const { normalizeStyleGuideImages } = await import("../utils/imageUtils");
   
-  // Normalize style guide images (convert URLs to base64 if needed)
+  // Normalize style guide images - now passes URLs directly (no base64 conversion to save egress)
   const normalizedImages = style_guide_images
     ? await normalizeStyleGuideImages(style_guide_images)
     : [];
@@ -114,9 +114,9 @@ export async function generateReferenceImage(
       description,
       shot_indices,
       previous_images: previous_images || [],
-      style_guide_images: normalizedImages,
+      style_guide_images: normalizedImages, // URLs passed directly - backend accepts them
       use_image_reference: use_image_reference || (referenceImages.length > 0),
-      reference_images_base64: referenceImages,
+      reference_images_base64: referenceImages, // URLs passed directly - backend accepts them
       // Keep old field for backward compatibility
       reference_image_base64: reference_image_base64 || "",
     }

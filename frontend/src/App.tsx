@@ -36,26 +36,56 @@ function App() {
 
   // Check auth state on mount
   useEffect(() => {
-    // Check current session
-    supabase.auth.getUser().then(({ data: { user: currentUser } }) => {
-      setUser(currentUser);
-      setLoading(false);
-    });
+    let isMounted = true;
+
+    const initAuth = async () => {
+      try {
+        // Check current session
+        const { data, error } = await supabase.auth.getUser();
+
+        if (!isMounted) return;
+
+        if (error) {
+          console.error("Error getting Supabase user:", error);
+          // If there's an auth error, treat as signed-out state
+          setUser(null);
+        } else {
+          setUser(data.user ?? null);
+        }
+      } catch (err) {
+        if (isMounted) {
+          console.error("Unexpected error getting Supabase user:", err);
+          setUser(null);
+        }
+      } finally {
+        // Always clear loading so the app never gets stuck on the spinner
+        if (isMounted) {
+          setLoading(false);
+        }
+      }
+    };
+
+    initAuth();
 
     // Listen for auth changes
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!isMounted) return;
       setUser(session?.user ?? null);
       setLoading(false);
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      isMounted = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
-  // Load last workflow on mount (only if authenticated)
+  // Load last workflow when user becomes authenticated
   useEffect(() => {
     if (!user) return;
+
     const loadLastWorkflow = async () => {
       try {
         const workflows = await listWorkflows();
@@ -67,8 +97,9 @@ function App() {
         console.error("Failed to load last workflow:", err);
       }
     };
+
     loadLastWorkflow();
-  }, []);
+  }, [user]);
 
   // Auto-save theme and styleGuide to workflow
   const autoSaveInputs = useCallback(async () => {
