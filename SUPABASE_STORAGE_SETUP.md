@@ -40,7 +40,7 @@ If you want to restrict uploads to authenticated users only:
 
 **Note**: For backend uploads, you can use the service role key instead of the anon key, which bypasses RLS policies.
 
-### 3. Environment Variables
+### 3. Environment Variables & Backend Dependencies
 
 Ensure your backend `.env.local` file includes:
 
@@ -56,6 +56,22 @@ SUPABASE_ANON_KEY=your-anon-key-here
 **Important**: 
 - The `SUPABASE_URL` and `SUPABASE_ANON_KEY` are required for the backend to upload images
 - The service role key is optional but recommended for backend operations as it bypasses RLS policies
+
+In addition, the backend relies on compatible versions of the Supabase Python client and `httpx`.
+The tested, working combination for Supabase Storage uploads in this project is:
+
+```text
+supabase==2.8.1
+httpx>=0.26.0,<0.28.0
+```
+
+These versions are pinned in `backend/requirements.txt`. If you upgrade either library in the future
+and start seeing errors like:
+
+> `Client.__init__() got an unexpected keyword argument 'proxy'`
+
+then you likely have an incompatible `supabase`/`httpx` pair. Revert to the versions above or check
+the `supabase-py` release notes for the required `httpx` minimum version.
 
 ### 4. Verify Setup
 
