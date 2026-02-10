@@ -54,8 +54,8 @@ SUPABASE_ANON_KEY=your-anon-key-here
 ```
 
 **Important**: 
-- The `SUPABASE_URL` and `SUPABASE_ANON_KEY` are required for the backend to upload images
-- The service role key is optional but recommended for backend operations as it bypasses RLS policies
+- The `SUPABASE_URL` and either `SUPABASE_SERVICE_ROLE_KEY` (recommended for backend) or `SUPABASE_ANON_KEY` are required for the backend to upload images
+- The service role key bypasses RLS and is safe to use **only on the backend** (never expose it to the frontend)
 
 In addition, the backend relies on compatible versions of the Supabase Python client and `httpx`.
 The tested, working combination for Supabase Storage uploads in this project is:

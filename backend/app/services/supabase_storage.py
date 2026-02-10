@@ -21,13 +21,18 @@ def _get_supabase_client() -> Client:
     """
     # Check for SUPABASE_URL first, then fallback to NEXT_PUBLIC_SUPABASE_URL
     supabase_url = os.getenv("SUPABASE_URL") or os.getenv("NEXT_PUBLIC_SUPABASE_URL")
-    # Check for SUPABASE_ANON_KEY first, then fallback to NEXT_PUBLIC_SUPABASE_ANON_KEY
-    supabase_key = os.getenv("SUPABASE_ANON_KEY") or os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY")
+    # Prefer service role key for backend uploads (bypasses RLS), then anon key
+    supabase_key = (
+        os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+        or os.getenv("SUPABASE_ANON_KEY")
+        or os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY")
+    )
     
     if not supabase_url or not supabase_key:
         raise ValueError(
             "Supabase credentials not configured. Please set SUPABASE_URL (or NEXT_PUBLIC_SUPABASE_URL) "
-            "and SUPABASE_ANON_KEY (or NEXT_PUBLIC_SUPABASE_ANON_KEY) environment variables."
+            "and SUPABASE_SERVICE_ROLE_KEY (recommended for backend) or SUPABASE_ANON_KEY "
+            "(or NEXT_PUBLIC_SUPABASE_ANON_KEY) environment variables."
         )
     
     return create_client(supabase_url, supabase_key)
