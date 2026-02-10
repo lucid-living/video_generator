@@ -85,12 +85,17 @@ async def upload_image_to_storage(
         # Upload to Supabase Storage
         # Note: We use the 'reference-images' bucket
         # The bucket should be created in Supabase dashboard with public access
+        #
+        # IMPORTANT:
+        # storage3/httpx expect all header values to be strings. Passing a bool
+        # (e.g. upsert=True) can cause `'bool' object has no attribute "encode"'`
+        # when httpx normalizes headers. Use string \"true\" instead.
         response = supabase.storage.from_(REFERENCE_IMAGES_BUCKET).upload(
             path=file_path,
             file=image_bytes,
             file_options={
                 "content-type": content_type,
-                "upsert": True  # Overwrite if exists
+                "upsert": "true"  # Overwrite if exists; must be string for httpx headers
             }
         )
         
