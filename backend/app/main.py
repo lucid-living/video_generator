@@ -13,6 +13,17 @@ from pathlib import Path
 
 from app.api import planning, assets, generation, webhooks, learning
 
+# Log library versions for debugging (helps diagnose dependency issues in production)
+try:
+    import supabase as _supabase_lib  # type: ignore
+except Exception:
+    _supabase_lib = None  # type: ignore
+
+try:
+    import httpx as _httpx_lib  # type: ignore
+except Exception:
+    _httpx_lib = None  # type: ignore
+
 # Load environment variables
 # Try to load from root directory .env.local first, then .env, then backend/.env
 root_dir = Path(__file__).parent.parent.parent  # Go up from backend/app/main.py to project root
@@ -35,6 +46,19 @@ app = FastAPI(
     description="API for generating branded music videos from text prompts",
     version="1.0.0",
 )
+
+# Log key dependency versions on startup
+print("=== Backend Dependency Versions ===")
+if _supabase_lib is not None:
+    print(f"supabase-py version: {getattr(_supabase_lib, '__version__', 'unknown')}")
+else:
+    print("supabase-py not installed or failed to import")
+
+if _httpx_lib is not None:
+    print(f"httpx version: {getattr(_httpx_lib, '__version__', 'unknown')}")
+else:
+    print("httpx not installed or failed to import")
+print("===================================")
 
 # CORS configuration
 cors_origins_env = os.getenv(
