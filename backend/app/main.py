@@ -265,7 +265,7 @@ async def root():
     """
     return {
         "message": "AI Music Video Generator API",
-        "version": "1.0.0",
+        "version": "1.0.0",  # NOTE: Bump only when making breaking API changes
         "docs": "/docs",
     }
 
