@@ -5,6 +5,7 @@ Service for generating reference images using OpenAI DALL-E API.
 import os
 import base64
 import asyncio
+import uuid
 from typing import List
 import httpx
 import json
@@ -321,7 +322,10 @@ CHRISTIAN VALUES & CONTENT GUIDELINES:
                 print(f"DALL-E API Error Status {response.status_code}: {error_msg}")
                 raise ValueError(f"DALL-E API error: Status {response.status_code} - {error_msg}")
         
-        image_id = f"dalle_{hash(prompt) % 1000000}"
+        # Use a random UUID-based image_id to ensure each generation
+        # gets a unique identifier, even for identical prompts. This
+        # avoids browser caching issues and ensures Supabase paths are unique.
+        image_id = f"dalle_{uuid.uuid4().hex[:10]}"
         
         return ReferenceImage(
             image_id=image_id,
@@ -644,9 +648,9 @@ async def _generate_with_nano_banana_pro(
         if 'image_base64' not in locals():
             raise ValueError("Image generation completed but no image data was retrieved")
         
-        # Create image_id hash from prompt and reference images
-        ref_images_hash = "".join([img[:50] for img in processed_images[:3]])  # Use first 3 images for hash
-        image_id = f"nbp_{hash(prompt + ref_images_hash) % 1000000}"
+        # Use a random UUID-based image_id to ensure each generation
+        # gets a unique identifier, even for identical prompts/reference images.
+        image_id = f"nbp_{uuid.uuid4().hex[:10]}"
         
         return ReferenceImage(
             image_id=image_id,
