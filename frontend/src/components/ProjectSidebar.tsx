@@ -21,23 +21,30 @@ export function ProjectSidebar({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const loadWorkflows = async () => {
+  const loadWorkflows = async (showSpinner: boolean = false) => {
     try {
-      setLoading(true);
+      if (showSpinner) {
+        setLoading(true);
+      }
       setError(null);
       const allWorkflows = await listWorkflows();
       setWorkflows(allWorkflows);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load projects");
     } finally {
-      setLoading(false);
+      if (showSpinner) {
+        setLoading(false);
+      }
     }
   };
 
   useEffect(() => {
-    loadWorkflows();
-    // Refresh list every 5 seconds to catch updates
-    const interval = setInterval(loadWorkflows, 5000);
+    // Initial load shows spinner
+    loadWorkflows(true);
+    // Refresh list every 5 seconds to catch updates, but do it silently
+    const interval = setInterval(() => {
+      void loadWorkflows(false);
+    }, 5000);
     return () => clearInterval(interval);
   }, []);
 
